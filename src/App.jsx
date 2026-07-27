@@ -1316,6 +1316,14 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
   const fileRef = useRef(null);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
+  const [rollCharsDraft, setRollCharsDraft] = useState(settings.rollNoAllowedSpecialChars);
+  const [rollCharsSaved, setRollCharsSaved] = useState(false);
+
+  function saveRollChars() {
+    persistSettings({ ...settings, rollNoAllowedSpecialChars: rollCharsDraft });
+    setRollCharsSaved(true);
+    setTimeout(() => setRollCharsSaved(false), 2000);
+  }
 
   function handleUpload(e) {
     const file = e.target.files[0];
@@ -1376,7 +1384,10 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
 
       <h4 style={{ fontSize: 12.5, color: "#274566", margin: "0 0 8px" }}>Roll No. format</h4>
       <Field label="Allowed special characters" hint='Roll numbers are always automatically trimmed of spaces and converted to CAPITALS before matching, so case and stray spaces never cause a mismatch. Only letters, numbers, and whatever characters you list here are allowed — everything else is stripped as the student types. Default: , \ / -'>
-        <input style={inputStyle} value={settings.rollNoAllowedSpecialChars} onChange={(e) => persistSettings({ ...settings, rollNoAllowedSpecialChars: e.target.value })} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <input style={inputStyle} value={rollCharsDraft} onChange={(e) => setRollCharsDraft(e.target.value)} />
+          <Btn onClick={saveRollChars} style={{ flexShrink: 0 }}>{rollCharsSaved ? "Saved!" : "Save"}</Btn>
+        </div>
       </Field>
 
       <h4 style={{ fontSize: 12.5, color: "#274566", margin: "16px 0 8px" }}>Student list</h4>
@@ -2109,7 +2120,7 @@ function HallTicketCard({ r, settings, courses }) {
           </div>
         </div>
 
-        <div style={{ padding: 18 }}>
+        <div style={{ padding: 14 }}>
           <div style={{ display: "flex", gap: 18 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 10.5, fontWeight: 700, color: accent.main, letterSpacing: 0.3, marginBottom: 2 }}>HALL TICKET NUMBER</div>
@@ -2180,11 +2191,11 @@ function HallTicketCard({ r, settings, courses }) {
 function InstructionsPage({ settings }) {
   const lines = (settings?.instructions || "").split("\n").map((l) => l.trim()).filter(Boolean);
   return (
-    <div className="print-page-break" style={{ maxWidth: 580, margin: "16px auto 0", border: "1px solid #dde3ea", borderRadius: 10, padding: 20, background: "#fff" }}>
-      <div style={{ fontWeight: 700, fontSize: 13.5, color: "#1a3a5c", marginBottom: 10, letterSpacing: 0.3 }}>INSTRUCTIONS</div>
-      <ul style={{ margin: 0, paddingLeft: 18 }}>
+    <div className="print-page-break" style={{ maxWidth: 580, margin: "10px auto 0", border: "1px solid #dde3ea", borderRadius: 10, padding: 14, background: "#fff" }}>
+      <div style={{ fontWeight: 700, fontSize: 12.5, color: "#1a3a5c", marginBottom: 8, letterSpacing: 0.3 }}>INSTRUCTIONS</div>
+      <ul style={{ margin: 0, paddingLeft: 16 }}>
         {lines.map((line, i) => (
-          <li key={i} style={{ fontSize: 11.5, color: "#1c2b3a", lineHeight: 1.6, marginBottom: 8 }}>{line}</li>
+          <li key={i} style={{ fontSize: 10.5, color: "#1c2b3a", lineHeight: 1.4, marginBottom: 5 }}>{line}</li>
         ))}
       </ul>
     </div>
@@ -2213,9 +2224,7 @@ function HallTickets({ regs, courses, settings }) {
             {selected && (
               <>
                 <div className="print-area">
-                  <div className="print-page-break">
-                    <HallTicketCard r={selected} settings={settings} courses={courses} />
-                  </div>
+                  <HallTicketCard r={selected} settings={settings} courses={courses} />
                   <InstructionsPage settings={settings} />
                 </div>
                 <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 14 }}>
@@ -2242,9 +2251,7 @@ function HallTickets({ regs, courses, settings }) {
               <div className="print-area" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {bulkList.map((r) => (
                   <div key={r.id} className="print-page-break">
-                    <div className="print-page-break">
-                      <HallTicketCard r={r} settings={settings} courses={courses} />
-                    </div>
+                    <HallTicketCard r={r} settings={settings} courses={courses} />
                     <InstructionsPage settings={settings} />
                   </div>
                 ))}
