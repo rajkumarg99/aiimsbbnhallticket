@@ -93,6 +93,30 @@ function formatExamDateRange(s) {
   return formatExamDate(s.date);
 }
 
+function sanitizeRollNo(value, allowedSpecialChars) {
+  const specials = (allowedSpecialChars !== undefined ? allowedSpecialChars : ",\\/-").split("");
+  const escapedClass = specials.map((c) => "\\" + c).join("");
+  const pattern = new RegExp("[^A-Z0-9" + escapedClass + "]", "g");
+  return (value || "").trim().toUpperCase().replace(pattern, "");
+}
+
+function normalizeDob(value) {
+  const v = (value || "").trim();
+  if (!v) return "";
+  // Already YYYY-MM-DD (what the <input type="date"> picker always produces)
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(v)) {
+    const [y, m, d] = v.split("-");
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  // DD-MM-YYYY or DD/MM/YYYY (common in Indian CSVs / Excel exports)
+  const dmy = v.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return v;
+}
+
 function formatDateTime(iso) {
   if (!iso) return "";
   try {
@@ -184,6 +208,7 @@ function defaultSettings() {
     paymentQrImageUrl: null,
     studentLoginEnabled: true,
     studentLoginMethod: "rollDob",
+    rollNoAllowedSpecialChars: ",\\/-",
     adminPassword: "admin123",
     registrationOpensAt: "",
     registrationClosesAt: "",
@@ -383,6 +408,7 @@ function settingsRowToObject(row) {
     signatoryTitle: row.signatory_title || defaults.signatoryTitle,
     signatoryImageUrl: row.signatory_image_url || null,
     signatureMissingMessage: row.signature_missing_message || defaults.signatureMissingMessage,
+    rollNoAllowedSpecialChars: row.roll_no_allowed_special_chars !== null && row.roll_no_allowed_special_chars !== undefined ? row.roll_no_allowed_special_chars : defaults.rollNoAllowedSpecialChars,
     instructions: row.instructions || defaults.instructions,
     logoDataUrl: row.logo_data_url || null,
     paymentQrImageUrl: row.payment_qr_image_url || null,
@@ -409,6 +435,7 @@ function settingsObjectToRow(s) {
     signatory_title: s.signatoryTitle,
     signatory_image_url: s.signatoryImageUrl,
     signature_missing_message: s.signatureMissingMessage,
+    roll_no_allowed_special_chars: s.rollNoAllowedSpecialChars,
     instructions: s.instructions,
     bank_account_no: s.bank.accountNo,
     bank_micr: s.bank.micr,
@@ -700,6 +727,7 @@ export default function App() {
           .print-area { position: absolute; left: 0; top: 0; width: 100%; }
           .print-page-break { break-after: page; page-break-after: always; }
           * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+          @page { size: A4; margin: 8mm; }
         }
         @keyframes blink-notice { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
       `}</style>
@@ -754,8 +782,10 @@ function StudentLoginGate({ settings, studentMaster, onVerified }) {
   const [rollErr, setRollErr] = useState("");
 
   function verifyRollDob() {
+    const target = sanitizeRollNo(rollNo, settings.rollNoAllowedSpecialChars);
+    const targetDob = normalizeDob(dob);
     const match = studentMaster.find(
-      (s) => (s.roll_no || "").trim().toLowerCase() === rollNo.trim().toLowerCase() && (s.dob || "") === dob
+      (s) => sanitizeRollNo(s.roll_no, settings.rollNoAllowedSpecialChars) === target && normalizeDob(s.dob) === targetDob
     );
     if (!match) { setRollErr("No matching record found. Check your Roll No. and date of birth, or contact the Examination Cell."); return; }
     setRollErr("");
@@ -772,7 +802,7 @@ function StudentLoginGate({ settings, studentMaster, onVerified }) {
 
       <div style={{ maxWidth: 340, margin: "0 auto" }}>
         <Field label="Roll No." required>
-          <input style={inputStyle} value={rollNo} onChange={(e) => setRollNo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && verifyRollDob()} />
+          <input style={{ ...inputStyle, textTransform: "uppercase" }} value={rollNo} onChange={(e) => setRollNo(sanitizeRollNo(e.target.value, settings.rollNoAllowedSpecialChars))} onKeyDown={(e) => e.key === "Enter" && verifyRollDob()} />
         </Field>
         <Field label="Date of birth" required>
           <input type="date" style={inputStyle} value={dob} onChange={(e) => setDob(e.target.value)} />
@@ -956,7 +986,7 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
             <SectionTitle n="1" title="Personal information" />
             <Grid2>
               <Field label="Roll No." required hint="As intimated to you by the Examination Cell (register office)">
-                <input style={inputStyle} value={form.hallTicketNo} onChange={(e) => update("hallTicketNo", e.target.value)} />
+                <input style={{ ...inputStyle, textTransform: "uppercase" }} value={form.hallTicketNo} onChange={(e) => update("hallTicketNo", sanitizeRollNo(e.target.value, settings.rollNoAllowedSpecialChars))} />
               </Field>
               <Field label="Candidate name (as per Class 10 certificate)" required>
                 <input style={{ ...inputStyle, textTransform: "uppercase" }} value={form.name} onChange={(e) => update("name", e.target.value.toUpperCase())} />
@@ -1087,7 +1117,7 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
             </div>
 
             <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
-              <Btn onClick={handleSubmit} disabled={busy || form.agree !== true}>
+              <Btn onClick={handleSubmit} disabled={busy || form.agree !== true || fee.count === 0}>
                 {busy ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={15} />}
                 Submit examination form
               </Btn>
@@ -1300,7 +1330,7 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
           .map((r) => {
             const rec = {};
             Object.keys(r).forEach((k) => { rec[k.trim().toLowerCase().replace(/\s+/g, "_")] = (r[k] || "").toString().trim(); });
-            return { roll_no: rec.roll_no || rec.rollno || rec.roll || "", mobile: rec.mobile || rec.mobile_no || rec.phone || "", dob: rec.dob || rec.date_of_birth || "", name: rec.name || "" };
+            return { roll_no: sanitizeRollNo(rec.roll_no || rec.rollno || rec.roll || "", settings.rollNoAllowedSpecialChars), mobile: rec.mobile || rec.mobile_no || rec.phone || "", dob: rec.dob || rec.date_of_birth || "", name: rec.name || "" };
           })
           .filter((r) => r.roll_no || r.mobile);
         if (cleaned.length === 0) {
@@ -1344,7 +1374,12 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
         this list empty to let anyone register without this check, as before.
       </p>
 
-      <h4 style={{ fontSize: 12.5, color: "#274566", margin: "0 0 8px" }}>Student list</h4>
+      <h4 style={{ fontSize: 12.5, color: "#274566", margin: "0 0 8px" }}>Roll No. format</h4>
+      <Field label="Allowed special characters" hint='Roll numbers are always automatically trimmed of spaces and converted to CAPITALS before matching, so case and stray spaces never cause a mismatch. Only letters, numbers, and whatever characters you list here are allowed — everything else is stripped as the student types. Default: , \ / -'>
+        <input style={inputStyle} value={settings.rollNoAllowedSpecialChars} onChange={(e) => persistSettings({ ...settings, rollNoAllowedSpecialChars: e.target.value })} />
+      </Field>
+
+      <h4 style={{ fontSize: 12.5, color: "#274566", margin: "16px 0 8px" }}>Student list</h4>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
         <div style={{ fontSize: 13, color: "#1c2b3a" }}><b>{studentMaster.length}</b> record(s) currently loaded</div>
         <Btn variant="outline" onClick={() => fileRef.current.click()}><Upload size={13} /> Upload CSV</Btn>
@@ -1513,16 +1548,24 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
           </Field>
           <div style={{ fontSize: 12.5, fontWeight: 600, color: "#5f6d7a", margin: "10px 0 6px" }}>Subjects & exam dates</div>
           <div style={{ fontSize: 11, color: "#a2adb8", marginBottom: 6 }}>For subjects held over more than one day (e.g. Practical), set both a "from" and "to" date.</div>
+          <div style={{ display: "grid", gridTemplateColumns: `minmax(160px, 1fr) 138px 16px 138px ${draft.feeTier ? "" : "80px "}22px`, gap: 8, alignItems: "center", marginBottom: 4 }}>
+            <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>SUBJECT NAME</div>
+            <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>FROM</div>
+            <div />
+            <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>TO</div>
+            {!draft.feeTier && <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>FEE</div>}
+            <div />
+          </div>
           {draft.subjects.map((s, i) => (
-            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center", flexWrap: "wrap" }}>
-              <input style={{ ...inputStyle, flex: 1, minWidth: 140 }} placeholder="Subject name" value={s.name} onChange={(e) => updateDraftSubject(i, "name", e.target.value)} />
-              <input style={{ ...inputStyle, width: 140 }} type="date" title="From date" value={s.date} onChange={(e) => updateDraftSubject(i, "date", e.target.value)} />
-              <span style={{ fontSize: 11, color: "#a2adb8" }}>to</span>
-              <input style={{ ...inputStyle, width: 140 }} type="date" title="To date (optional)" value={s.dateTo} onChange={(e) => updateDraftSubject(i, "dateTo", e.target.value)} />
+            <div key={i} style={{ display: "grid", gridTemplateColumns: `minmax(160px, 1fr) 138px 16px 138px ${draft.feeTier ? "" : "80px "}22px`, gap: 8, marginBottom: 6, alignItems: "center" }}>
+              <input style={inputStyle} placeholder="Subject name" value={s.name} onChange={(e) => updateDraftSubject(i, "name", e.target.value)} />
+              <input style={inputStyle} type="date" title="From date" value={s.date} onChange={(e) => updateDraftSubject(i, "date", e.target.value)} />
+              <span style={{ fontSize: 11, color: "#a2adb8", textAlign: "center" }}>to</span>
+              <input style={inputStyle} type="date" title="To date (optional)" value={s.dateTo} onChange={(e) => updateDraftSubject(i, "dateTo", e.target.value)} />
               {!draft.feeTier && (
-                <input style={{ ...inputStyle, width: 90 }} type="number" placeholder="Fee" value={s.fee} onChange={(e) => updateDraftSubject(i, "fee", e.target.value)} />
+                <input style={inputStyle} type="number" placeholder="Fee" value={s.fee} onChange={(e) => updateDraftSubject(i, "fee", e.target.value)} />
               )}
-              <button onClick={() => removeSubjectRow(i)} style={{ background: "transparent", border: "none", color: "#a13a2f", cursor: "pointer" }}><XCircle size={16} /></button>
+              <button onClick={() => removeSubjectRow(i)} style={{ background: "transparent", border: "none", color: "#a13a2f", cursor: "pointer", justifySelf: "center" }}><XCircle size={16} /></button>
             </div>
           ))}
           <Btn variant="outline" onClick={addSubjectRow} style={{ marginTop: 4 }}>+ Add subject</Btn>
@@ -1750,7 +1793,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                 <>
                   <Grid2>
                     <div>
-                      <Field label="Roll No."><input style={inputStyle} value={editDraft.hallTicketNo} onChange={(e) => setEditDraft((d) => ({ ...d, hallTicketNo: e.target.value }))} /></Field>
+                      <Field label="Roll No."><input style={{ ...inputStyle, textTransform: "uppercase" }} value={editDraft.hallTicketNo} onChange={(e) => setEditDraft((d) => ({ ...d, hallTicketNo: sanitizeRollNo(e.target.value, settings.rollNoAllowedSpecialChars) }))} /></Field>
                       <Field label="Candidate name"><input style={{ ...inputStyle, textTransform: "uppercase" }} value={editDraft.name} onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value.toUpperCase() }))} /></Field>
                       <Field label="Father / Guardian name"><input style={{ ...inputStyle, textTransform: "uppercase" }} value={editDraft.father} onChange={(e) => setEditDraft((d) => ({ ...d, father: e.target.value.toUpperCase() }))} /></Field>
                       <Field label="Date of birth"><input type="date" style={inputStyle} value={editDraft.dob} onChange={(e) => setEditDraft((d) => ({ ...d, dob: e.target.value }))} /></Field>
@@ -2170,7 +2213,9 @@ function HallTickets({ regs, courses, settings }) {
             {selected && (
               <>
                 <div className="print-area">
-                  <HallTicketCard r={selected} settings={settings} courses={courses} />
+                  <div className="print-page-break">
+                    <HallTicketCard r={selected} settings={settings} courses={courses} />
+                  </div>
                   <InstructionsPage settings={settings} />
                 </div>
                 <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 14 }}>
@@ -2197,7 +2242,9 @@ function HallTickets({ regs, courses, settings }) {
               <div className="print-area" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {bulkList.map((r) => (
                   <div key={r.id} className="print-page-break">
-                    <HallTicketCard r={r} settings={settings} courses={courses} />
+                    <div className="print-page-break">
+                      <HallTicketCard r={r} settings={settings} courses={courses} />
+                    </div>
                     <InstructionsPage settings={settings} />
                   </div>
                 ))}
@@ -2242,7 +2289,7 @@ function ReceiptCard({ r }) {
       </div>
       <div style={{ flex: 1, minHeight: 0, border: "1px dashed #dde3ea", borderRadius: 6, overflow: "hidden", background: "#f7f9fb" }}>
         {r.receipt?.dataUrl && r.receipt.type !== "application/pdf" ? (
-          <img src={r.receipt.dataUrl} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          <img src={r.receipt.dataUrl} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
         ) : (
           <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 8, boxSizing: "border-box" }}>
             {r.receipt?.dataUrl && r.receipt.type === "application/pdf" ? (
