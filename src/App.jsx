@@ -250,6 +250,43 @@ function resizeImage(file, maxDim) {
   });
 }
 
+function dataUrlToBlob(dataUrl) {
+  const [header, base64] = dataUrl.split(",");
+  const mime = /data:(.*?);base64/.exec(header)[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+// Uploads a file (or a resized-image data URL) to the "uploads" Storage
+// bucket and returns its public URL. Storing just this short URL in the
+// database — instead of the whole file as base64 text — is what keeps
+// routine data loading small; the actual file is only fetched over the
+// network when something needs to display or download it.
+async function uploadToStorage(fileOrDataUrl, path, contentType) {
+  const blob = typeof fileOrDataUrl === "string" ? dataUrlToBlob(fileOrDataUrl) : fileOrDataUrl;
+  const { error } = await supabase.storage.from("uploads").upload(path, blob, {
+    upsert: true,
+    contentType: contentType || blob.type || "application/octet-stream",
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from("uploads").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+async function urlToBase64(url) {
+  const resp = await fetch(url);
+  const blob = await resp.blob();
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = btoa(binary);
+  const ext = blob.type.includes("png") ? "png" : (blob.type.includes("jpeg") || blob.type.includes("jpg")) ? "jpg" : "bin";
+  return { base64, ext, mime: blob.type };
+}
+
 function QRBlock({ text, size = 96 }) {
   const src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=2&data=${encodeURIComponent(text || "AIIMS Bibinagar")}`;
   return (
@@ -347,9 +384,9 @@ function Header({ title, subtitle, onBack, right }) {
 function parseUrlIntent() {
   try {
     const params = new URLSearchParams(window.location.search);
-    return { course: params.get("course") || "", view: params.get("view") || "" };
+    return { course: params.get("course") || "", view: params.get("view") || "", verify: params.get("verify") || "" };
   } catch (e) {
-    return { course: "", view: "" };
+    return { course: "", view: "", verify: "" };
   }
 }
 
@@ -460,7 +497,7 @@ export default function App() {
   const regsRef = useRef([]);
   const coursesRef = useRef({});
   const urlIntent = useMemo(parseUrlIntent, []);
-  const [view, setView] = useState(urlIntent.view === "admin" ? "admin" : (urlIntent.view === "student" || urlIntent.course) ? "student" : "landing");
+  const [view, setView] = useState(urlIntent.verify ? "verify" : urlIntent.view === "admin" ? "admin" : (urlIntent.view === "student" || urlIntent.course) ? "student" : "landing");
 
   async function refreshAll() {
     try {
@@ -732,8 +769,69 @@ export default function App() {
         @keyframes blink-notice { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
       `}</style>
       {view === "landing" && <Landing onPick={setView} />}
+      {view === "verify" && <VerificationView rollNo={urlIntent.verify} settings={settings} onExit={() => { setView("landing"); }} />}
       {view === "student" && <StudentPortal regs={regs} persist={persist} courses={courses} settings={settings} studentMaster={studentMaster} initialCourse={urlIntent.course} onExit={() => setView("landing")} />}
       {view === "admin" && <AdminPortal regs={regs} persist={persist} nextSeq={nextSeq} courses={courses} persistCourses={persistCourses} settings={settings} persistSettings={persistSettings} studentMaster={studentMaster} persistStudentMaster={persistStudentMaster} onRefresh={refreshAll} onExit={() => setView("landing")} />}
+    </div>
+  );
+}
+
+function VerificationView({ rollNo, settings, onExit }) {
+  const [status, setStatus] = useState("loading"); // loading | found | notfound | error
+  const [record, setRecord] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("applications")
+          .select("*")
+          .eq("hall_ticket_no", rollNo)
+          .eq("status", "approved")
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) { setStatus("notfound"); return; }
+        setRecord(data);
+        setStatus("found");
+      } catch (e) {
+        setStatus("error");
+      }
+    })();
+  }, [rollNo]);
+
+  return (
+    <div>
+      <Header title="Hall ticket verification" subtitle="AIIMS Bibinagar Examination Cell" onBack={onExit} />
+      <div style={{ padding: 22, display: "flex", justifyContent: "center" }}>
+        <div style={{ background: "#fff", border: "1px solid #dde3ea", borderRadius: 10, padding: 28, maxWidth: 420, width: "100%", textAlign: "center" }}>
+          {status === "loading" && (
+            <div style={{ color: "#7a8794", fontSize: 13 }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite", verticalAlign: "middle", marginRight: 8 }} />Checking...</div>
+          )}
+          {status === "error" && (
+            <div style={{ color: "#a13a2f", fontSize: 13 }}>Could not verify right now. Please try again in a moment.</div>
+          )}
+          {status === "notfound" && (
+            <>
+              <XCircle size={32} color="#a13a2f" />
+              <h3 style={{ margin: "12px 0 4px", color: "#1c2b3a" }}>Not a valid hall ticket</h3>
+              <p style={{ fontSize: 12.5, color: "#7a8794" }}>Roll No. {rollNo} doesn't match an approved hall ticket. This QR code may be invalid, or the application may not yet be approved.</p>
+            </>
+          )}
+          {status === "found" && record && (
+            <>
+              <CheckCircle2 size={32} color="#2f6b45" />
+              <h3 style={{ margin: "12px 0 14px", color: "#1c2b3a" }}>Valid hall ticket</h3>
+              {record.photo_data_url && (
+                <img src={record.photo_data_url} style={{ width: 84, height: 100, objectFit: "cover", borderRadius: 6, border: "1px solid #dde3ea", marginBottom: 12 }} />
+              )}
+              <DetailRow label="Roll No." value={record.hall_ticket_no} />
+              <DetailRow label="Candidate name" value={record.name} />
+              <DetailRow label="Course" value={record.course_name} />
+              <DetailRow label="Examination centre" value={settings?.examCentre || "—"} />
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -817,12 +915,14 @@ function StudentLoginGate({ settings, studentMaster, onVerified }) {
 function StudentPortal({ regs, persist, courses, settings, studentMaster, initialCourse, onExit }) {
   const [sub, setSub] = useState("form");
   const [verified, setVerified] = useState(null);
+  const [draftId] = useState(() => uid());
   const [form, setForm] = useState(() => ({
     ...emptyForm,
     course: initialCourse && courses[initialCourse] && courses[initialCourse].active !== false ? initialCourse : "",
   }));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState({});
   const [myApp, setMyApp] = useState(null);
   const [lookupMobile, setLookupMobile] = useState("");
   const [lookupHallTicket, setLookupHallTicket] = useState("");
@@ -860,24 +960,33 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
       setError(`${label} exceeds the maximum allowed size.`); return;
     }
     setError("");
+    setUploading((u) => ({ ...u, [field]: true }));
     try {
-      const dataUrl = await resizeImage(file, maxDim);
-      update(field, { dataUrl, name: file.name });
+      const resizedDataUrl = await resizeImage(file, maxDim);
+      const url = await uploadToStorage(resizedDataUrl, `${field}s/${draftId}.jpg`, "image/jpeg");
+      update(field, { dataUrl: url, name: file.name });
     } catch (err) {
-      setError("Could not process the image. Try another file.");
+      setError(`Could not upload ${label.toLowerCase()}. Check your internet connection and try again.`);
     }
+    setUploading((u) => ({ ...u, [field]: false }));
   }
 
-  function handleReceipt(e) {
+  async function handleReceipt(e) {
     const file = e.target.files[0];
     if (!file) return;
     const okType = ["image/jpeg", "image/jpg", "image/png", "image/tiff", "image/tif"].includes(file.type);
     if (!okType) { setError("Payment receipt must be an image file (JPG, PNG, or TIFF)."); return; }
     if (file.size > 2 * 1024 * 1024) { setError("Payment receipt exceeds 2 MB."); return; }
     setError("");
-    const reader = new FileReader();
-    reader.onload = () => update("receipt", { dataUrl: reader.result, name: file.name, type: file.type, size: file.size });
-    reader.readAsDataURL(file);
+    setUploading((u) => ({ ...u, receipt: true }));
+    try {
+      const ext = file.name.includes(".") ? file.name.split(".").pop() : "jpg";
+      const url = await uploadToStorage(file, `receipts/${draftId}.${ext}`, file.type);
+      update("receipt", { dataUrl: url, name: file.name, type: file.type, size: file.size });
+    } catch (err) {
+      setError("Could not upload the receipt. Check your internet connection and try again.");
+    }
+    setUploading((u) => ({ ...u, receipt: false }));
   }
 
   function validate() {
@@ -898,8 +1007,9 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
   async function handleSubmit() {
     const err = validate();
     if (err) { setError(err); return; }
+    if (Object.values(uploading).some(Boolean)) { setError("Please wait for uploads to finish before submitting."); return; }
     setBusy(true);
-    const appId = uid();
+    const appId = draftId;
     const record = {
       id: appId,
       hallTicketNo: form.hallTicketNo.trim(),
@@ -1024,9 +1134,11 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
             <Grid2>
               <Field label="Photograph" required hint="JPG/PNG, max 1 MB">
                 <UploadBox onChange={(e) => handleImage(e, "photo", 1024 * 1024, 400, "Photograph")} preview={form.photo?.dataUrl} accept="image/jpeg,image/png" />
+                {uploading.photo && <div style={{ fontSize: 11.5, color: "#8a6116", marginTop: 4 }}><Loader2 size={11} style={{ animation: "spin 1s linear infinite", verticalAlign: "middle", marginRight: 4 }} />Uploading...</div>}
               </Field>
               <Field label="Signature" required hint="JPG/PNG, max 500 KB">
                 <UploadBox onChange={(e) => handleImage(e, "signature", 500 * 1024, 300, "Signature")} preview={form.signature?.dataUrl} accept="image/jpeg,image/png" />
+                {uploading.signature && <div style={{ fontSize: 11.5, color: "#8a6116", marginTop: 4 }}><Loader2 size={11} style={{ animation: "spin 1s linear infinite", verticalAlign: "middle", marginRight: 4 }} />Uploading...</div>}
               </Field>
             </Grid2>
 
@@ -1091,6 +1203,7 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
                   </Field>
                   <Field label="Upload payment receipt" required hint="JPG/PNG/TIFF image, max 2 MB">
                     <UploadBox onChange={handleReceipt} fileName={form.receipt?.name} accept="image/jpeg,image/png,image/tiff,image/tif" />
+                    {uploading.receipt && <div style={{ fontSize: 11.5, color: "#8a6116", marginTop: 4 }}><Loader2 size={11} style={{ animation: "spin 1s linear infinite", verticalAlign: "middle", marginRight: 4 }} />Uploading...</div>}
                   </Field>
                 </div>
               </div>
@@ -1117,7 +1230,7 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
             </div>
 
             <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
-              <Btn onClick={handleSubmit} disabled={busy || form.agree !== true || fee.count === 0}>
+              <Btn onClick={handleSubmit} disabled={busy || form.agree !== true || fee.count === 0 || Object.values(uploading).some(Boolean)}>
                 {busy ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={15} />}
                 Submit examination form
               </Btn>
@@ -1289,6 +1402,7 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
           <TabBtn active={tab === "students-master"} onClick={() => setTab("students-master")}>Students</TabBtn>
           <TabBtn active={tab === "settings"} onClick={() => setTab("settings")}>Settings</TabBtn>
           <TabBtn active={tab === "reports"} onClick={() => setTab("reports")}>Reports</TabBtn>
+          <TabBtn active={tab === "backup"} onClick={() => setTab("backup")}>Backup</TabBtn>
           <button onClick={handleRefresh} title="Refresh data from storage" style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, color: "#cfe0f2", cursor: "pointer", padding: "5px 8px", fontSize: 12 }}>
             <Loader2 size={14} style={refreshing ? { animation: "spin 1s linear infinite" } : {}} /> Refresh
           </button>
@@ -1303,6 +1417,7 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
         {tab === "settings" && <SettingsAdmin settings={settings} persistSettings={persistSettings} />}
         {tab === "receipts" && <ReceiptsSheet regs={regs} />}
         {tab === "reports" && <Reports regs={regs} courses={courses} />}
+        {tab === "backup" && <ConfigBackup courses={courses} persistCourses={persistCourses} settings={settings} persistSettings={persistSettings} />}
       </div>
     </div>
   );
@@ -1427,6 +1542,61 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
           {studentMaster.length > 200 && <div style={{ padding: 8, fontSize: 11, color: "#a2adb8" }}>Showing first 200 of {studentMaster.length}.</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+function ConfigBackup({ courses, persistCourses, settings, persistSettings }) {
+  const fileRef = useRef(null);
+  const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");
+
+  function exportConfig() {
+    const payload = { exportedAt: new Date().toISOString(), courses, settings };
+    download("aiims_configuration_backup.json", JSON.stringify(payload, null, 2), "application/json");
+  }
+
+  function handleImportFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setErr(""); setInfo("");
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed.courses || !parsed.settings) throw new Error("This doesn't look like a configuration backup file.");
+        const ok = window.confirm("Import this configuration? This replaces your current courses, fees, and settings in this project.");
+        if (!ok) return;
+        persistCourses(parsed.courses);
+        persistSettings(parsed.settings);
+        setInfo("Configuration imported. If this backup came from a different Supabase project, the institute logo, signatory signature, and payment QR code image will need to be re-uploaded (Settings tab) — those are files, not text, so they don't travel inside this backup.");
+      } catch (err2) {
+        setErr("Could not read that file: " + err2.message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  return (
+    <div style={{ background: "#fff", border: "1px solid #dde3ea", borderRadius: 10, padding: 20 }}>
+      <div style={{ fontWeight: 700, fontSize: 13.5, color: "#1c2b3a", marginBottom: 4 }}>Configuration backup</div>
+      <p style={{ fontSize: 12.5, color: "#7a8794", marginBottom: 16 }}>
+        Save your courses, fees, and settings as one file, and load them straight into a new Supabase project instead
+        of re-entering everything by hand. This does not include student applications or the student master list —
+        export those separately from the Reports and Students tabs.
+      </p>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <Btn onClick={exportConfig}><Download size={14} /> Export configuration</Btn>
+        <Btn variant="outline" onClick={() => fileRef.current.click()}><Upload size={14} /> Import configuration</Btn>
+        <input ref={fileRef} type="file" accept=".json,application/json" onChange={handleImportFile} style={{ display: "none" }} />
+      </div>
+      {err && <div style={{ color: "#a13a2f", fontSize: 12.5, marginTop: 10 }}>{err}</div>}
+      {info && <div style={{ color: "#2f6b45", fontSize: 12.5, marginTop: 10 }}>{info}</div>}
+      <p style={{ fontSize: 11, color: "#a2adb8", marginTop: 12 }}>
+        Note: the institute logo, signatory signature, and payment QR image are stored as files (not text), so they
+        aren't included here — after importing into a new project, re-upload those three from the Settings tab.
+      </p>
     </div>
   );
 }
@@ -1933,7 +2103,8 @@ function SettingsAdmin({ settings, persistSettings }) {
     if (!["image/jpeg", "image/jpg", "image/png"].includes(file.type)) return;
     try {
       const dataUrl = await resizeImage(file, 240);
-      set("logoDataUrl", dataUrl);
+      const url = await uploadToStorage(dataUrl, "branding/logo.jpg", "image/jpeg");
+      set("logoDataUrl", url);
     } catch (err) {}
   }
 
@@ -1943,7 +2114,8 @@ function SettingsAdmin({ settings, persistSettings }) {
     if (!["image/jpeg", "image/jpg", "image/png"].includes(file.type)) return;
     try {
       const dataUrl = await resizeImage(file, 200);
-      set("signatoryImageUrl", dataUrl);
+      const url = await uploadToStorage(dataUrl, "branding/signatory.jpg", "image/jpeg");
+      set("signatoryImageUrl", url);
     } catch (err) {}
   }
 
@@ -1953,7 +2125,8 @@ function SettingsAdmin({ settings, persistSettings }) {
     if (!["image/jpeg", "image/jpg", "image/png"].includes(file.type)) return;
     try {
       const dataUrl = await resizeImage(file, 400);
-      set("paymentQrImageUrl", dataUrl);
+      const url = await uploadToStorage(dataUrl, "branding/payment-qr.jpg", "image/jpeg");
+      set("paymentQrImageUrl", url);
     } catch (err) {}
   }
 
@@ -2415,30 +2588,43 @@ async function downloadPhotosAndSignaturesZip(regs, scope, onProgress) {
   const zip = new JSZip();
   const list = scope === "approved" ? regs.filter((r) => r.status === "approved") : regs;
   let included = 0;
+  let failed = 0;
+  const jobs = [];
   list.forEach((r) => {
     const roll = safeFileToken(r.hallTicketNo, r.id);
-    if (r.photo?.dataUrl) {
-      const parsed = parseDataUrl(r.photo.dataUrl);
-      if (parsed) { zip.file(`${roll}_photo.${parsed.ext}`, parsed.base64, { base64: true }); included++; }
-    }
-    if (r.signature?.dataUrl) {
-      const parsed = parseDataUrl(r.signature.dataUrl);
-      if (parsed) { zip.file(`${roll}_signature.${parsed.ext}`, parsed.base64, { base64: true }); included++; }
-    }
+    if (r.photo?.dataUrl) jobs.push({ url: r.photo.dataUrl, name: `${roll}_photo` });
+    if (r.signature?.dataUrl) jobs.push({ url: r.signature.dataUrl, name: `${roll}_signature` });
   });
-  if (included === 0) return { ok: false, count: 0 };
-  const blob = await zip.generateAsync({ type: "blob" }, (meta) => onProgress && onProgress(meta.percent));
+  for (let i = 0; i < jobs.length; i++) {
+    const { url, name } = jobs[i];
+    try {
+      if (url.startsWith("data:")) {
+        const parsed = parseDataUrl(url);
+        if (parsed) { zip.file(`${name}.${parsed.ext}`, parsed.base64, { base64: true }); included++; }
+      } else {
+        const { base64, ext } = await urlToBase64(url);
+        zip.file(`${name}.${ext}`, base64, { base64: true });
+        included++;
+      }
+    } catch (e) {
+      failed++;
+    }
+    onProgress && onProgress(Math.round(((i + 1) / jobs.length) * 90));
+  }
+  if (included === 0) return { ok: false, count: 0, failed };
+  const blob = await zip.generateAsync({ type: "blob" }, (meta) => onProgress && onProgress(90 + Math.round(meta.percent * 0.1)));
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = "aiims_photos_signatures.zip";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  return { ok: true, count: included };
+  return { ok: true, count: included, failed };
 }
 
 function PhotoSignatureExport({ regs }) {
   const [scope, setScope] = useState("approved");
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [err, setErr] = useState("");
   const [done, setDone] = useState("");
 
@@ -2446,10 +2632,11 @@ function PhotoSignatureExport({ regs }) {
     setBusy(true);
     setErr("");
     setDone("");
+    setProgress(0);
     try {
-      const result = await downloadPhotosAndSignaturesZip(regs, scope);
+      const result = await downloadPhotosAndSignaturesZip(regs, scope, setProgress);
       if (!result.ok) setErr("No photos or signatures found for the selected applications.");
-      else setDone(`Downloaded ${result.count} file(s).`);
+      else setDone(`Downloaded ${result.count} file(s).${result.failed ? ` (${result.failed} couldn't be fetched and were skipped.)` : ""}`);
     } catch (e) {
       setErr(e.message || "Could not build the ZIP file. Check your internet connection and try again.");
     }
@@ -2470,7 +2657,7 @@ function PhotoSignatureExport({ regs }) {
         </select>
         <Btn onClick={run} disabled={busy}>
           {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />}
-          {busy ? "Preparing ZIP..." : "Download ZIP"}
+          {busy ? `Preparing ZIP... ${progress}%` : "Download ZIP"}
         </Btn>
       </div>
       {err && <div style={{ color: "#a13a2f", fontSize: 12.5, marginTop: 10 }}>{err}</div>}
