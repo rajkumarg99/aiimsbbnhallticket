@@ -9,8 +9,8 @@
 //   5. Copy the "anon public" key (NOT the "service_role" key — never put
 //      that one in this file or anywhere in the app) into SUPABASE_ANON_KEY.
 // --------------------------------------------------------------------------
-export const SUPABASE_URL = "https://fxozqgmhqwsklbpogaks.supabase.co";
-export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ4b3pxZ21ocXdza2xicG9nYWtzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ3Njc5NDAsImV4cCI6MjEwMDM0Mzk0MH0.v4dY7J_YmKXjsbBc4k-dsxg8Kd1_panMCukWMxuqxLQ";
+export const SUPABASE_URL = "https://eekidqwwkxswvuhbaswx.supabase.co";
+export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVla2lkcXd3a3hzd3Z1aGJhc3d4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyMDcxOTQsImV4cCI6MjEwMDc4MzE5NH0.Jm-JizLwi3GtfixlCnt-RNN7NlQeyu5Bjsq04aRJte8";
 
 import { createClient } from "@supabase/supabase-js";
 
