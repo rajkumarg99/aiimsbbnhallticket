@@ -1168,7 +1168,7 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
                       : "₹20 for one subject, ₹30 for two subjects, ₹60 for three or more subjects."}
                   </p>
                 )}
-                {courseSubjects.map((s) => (
+                {sortSubjectsByDate(courseSubjects).map((s) => (
                   <label key={s.name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #ecf0f4", fontSize: 13.5 }}>
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <input type="checkbox" checked={!!form.subjects[s.name]} onChange={() => toggleSubject(s.name)} />
@@ -2007,7 +2007,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                           : "₹20 for one subject, ₹30 for two subjects, ₹60 for three or more subjects."}
                       </div>
                     )}
-                    {(courses[editDraft.course]?.subjects || []).map((s) => (
+                    {sortSubjectsByDate(courses[editDraft.course]?.subjects || []).map((s) => (
                       <label key={s.name} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13 }}>
                         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <input type="checkbox" checked={editDraft.subjects.includes(s.name)} onChange={() => toggleEditSubject(s.name)} /> {s.name}
@@ -2324,18 +2324,15 @@ function HallTicketCard({ r, settings, courses }) {
           <div style={{ marginTop: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: accent.main, marginBottom: 6, letterSpacing: 0.3 }}>SUBJECTS & EXAMINATION DATES</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              {(r.subjects || []).map((raw, i) => {
-                const s = liveSubject(courses, r.course, raw);
-                return (
-                <div key={raw.id || s.name} style={{
+              {sortSubjectsByDate((r.subjects || []).map((raw) => liveSubject(courses, r.course, raw))).map((s, i) => (
+                <div key={s.id || s.name} style={{
                   display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 10px",
                   borderRadius: 6, background: accent.soft, borderLeft: `4px solid ${CHIP_PALETTE[i % CHIP_PALETTE.length]}`,
                 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "#1c2b3a" }}>{s.name}</span>
                   <span style={{ fontSize: 11, color: "#5f6d7a" }}>{formatExamDateRange(s)}</span>
                 </div>
-                );
-              })}
+              ))}
             </div>
           </div>
 
@@ -2447,6 +2444,10 @@ function HallTickets({ regs, courses, settings }) {
 function lastFiveDigits(hallTicketNo) {
   const digitsOnly = (hallTicketNo || "").replace(/\D/g, "");
   return digitsOnly.slice(-5);
+}
+
+function sortSubjectsByDate(list) {
+  return [...list].sort((a, b) => (a.date || "9999-99-99").localeCompare(b.date || "9999-99-99"));
 }
 
 function sortByRoll(list) {
