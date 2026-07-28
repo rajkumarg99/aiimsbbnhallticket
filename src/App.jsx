@@ -60,6 +60,8 @@ function computeFee(courses, courseName, subjectNames) {
     total = count === 0 ? 0 : count === 1 ? 20 : 40;
   } else if (courseData.feeTier === "tier2") {
     total = count === 0 ? 0 : count === 1 ? 20 : count === 2 ? 30 : 60;
+  } else if (courseData.feeTier === "tier3") {
+    total = count === 0 ? 0 : 200;
   } else {
     total = chosen.reduce((s, x) => s + x.fee, 0);
   }
@@ -1161,6 +1163,8 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
                   <p style={{ fontSize: 11.5, color: "#8a6116", margin: "0 0 10px" }}>
                     Fee schedule: {feeTier === "tier1"
                       ? "₹20 for one subject, ₹40 for two or more subjects."
+                      : feeTier === "tier3"
+                      ? "Flat ₹200 whether you select one subject or all of them."
                       : "₹20 for one subject, ₹30 for two subjects, ₹60 for three or more subjects."}
                   </p>
                 )}
@@ -1725,6 +1729,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
               <option value="">Flat — sum of subject fees</option>
               <option value="tier1">Tier 1 — ₹20 for one subject, ₹40 for two or more</option>
               <option value="tier2">Tier 2 — ₹20 for one, ₹30 for two, ₹60 for three or more</option>
+              <option value="tier3">Tier 3 — Flat ₹200 for one or all subjects</option>
             </select>
           </Field>
           <div style={{ fontSize: 12.5, fontWeight: 600, color: "#5f6d7a", margin: "10px 0 6px" }}>Subjects & exam dates</div>
@@ -1766,7 +1771,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#1c2b3a" }}>{name}</div>
                 <div style={{ fontSize: 11.5, color: "#7a8794" }}>
-                  Code {c.code} · {c.subjects.length} subject(s) · {c.feeTier ? (c.feeTier === "tier1" ? "Tiered (₹20/₹40)" : "Tiered (₹20/₹30/₹60)") : "Flat, sum of subject fees"}
+                  Code {c.code} · {c.subjects.length} subject(s) · {c.feeTier ? (c.feeTier === "tier1" ? "Tiered (₹20/₹40)" : c.feeTier === "tier3" ? "Flat ₹200" : "Tiered (₹20/₹30/₹60)") : "Flat, sum of subject fees"}
                 </div>
                 {c.examTitle && <div style={{ fontSize: 11, color: "#a9762f", marginTop: 2, fontStyle: "italic" }}>{c.examTitle}</div>}
               </div>
@@ -1997,6 +2002,8 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                       <div style={{ fontSize: 11, color: "#8a6116", marginBottom: 8 }}>
                         Fee schedule: {courses[editDraft.course].feeTier === "tier1"
                           ? "₹20 for one subject, ₹40 for two or more subjects."
+                          : courses[editDraft.course].feeTier === "tier3"
+                          ? "Flat ₹200 whether one subject or all of them are selected."
                           : "₹20 for one subject, ₹30 for two subjects, ₹60 for three or more subjects."}
                       </div>
                     )}
@@ -2266,10 +2273,7 @@ const CHIP_PALETTE = ["#a9762f", "#0f766e", "#8b2635", "#1a3a5c", "#6d28d9", "#2
 
 function HallTicketCard({ r, settings, courses }) {
   const accent = courseAccent(r.course);
-  const base = (settings?.publicBaseUrl || "").trim();
-  const qrText = base
-    ? `${base}${base.includes("?") ? "&" : "?"}verify=${encodeURIComponent(r.hallTicketNo || "")}`
-    : `AIIMS Bibinagar Hall Ticket - Roll No ${r.hallTicketNo || ""} - ${r.name || ""}`;
+  const qrText = `Roll No: ${r.hallTicketNo || ""}\nName: ${r.name || ""}\nCourse: ${r.course || ""}`;
   return (
     <div style={{ maxWidth: 580, margin: "0 auto", borderRadius: 12, padding: 3, background: `linear-gradient(135deg, ${accent.main}, #e0b86a)` }}>
       <div style={{ borderRadius: 10, background: "#fff", overflow: "hidden", position: "relative" }}>
