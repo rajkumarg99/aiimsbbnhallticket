@@ -949,7 +949,21 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
   }
 
   function toggleSubject(name) {
-    setForm((f) => ({ ...f, subjects: { ...f.subjects, [name]: !f.subjects[name] } }));
+    setForm((f) => {
+      const turningOn = !f.subjects[name];
+      const nextSubjects = { ...f.subjects, [name]: turningOn };
+      if (turningOn) {
+        const target = courseSubjects.find((s) => s.name === name);
+        if (target && target.date) {
+          courseSubjects.forEach((s) => {
+            if (s.name !== name && s.date === target.date) {
+              nextSubjects[s.name] = false;
+            }
+          });
+        }
+      }
+      return { ...f, subjects: nextSubjects };
+    });
   }
 
   async function handleImage(e, field, maxBytes, maxDim, label) {
@@ -1168,18 +1182,22 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
                       : "₹20 for one subject, ₹30 for two subjects, ₹60 for three or more subjects."}
                   </p>
                 )}
-                {sortSubjectsByDate(courseSubjects).map((s) => (
+                {sortSubjectsByDate(courseSubjects).map((s) => {
+                  const clashes = s.date && courseSubjects.some((other) => other.name !== s.name && other.date === s.date);
+                  return (
                   <label key={s.name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #ecf0f4", fontSize: 13.5 }}>
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <input type="checkbox" checked={!!form.subjects[s.name]} onChange={() => toggleSubject(s.name)} />
                       {s.name}
+                      {clashes && <span style={{ fontSize: 10, color: "#a13a2f", fontStyle: "italic" }}>(same date — pick only one)</span>}
                     </span>
                     <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <span style={{ fontSize: 11.5, color: "#8a6116" }}>{formatExamDateRange(s)}</span>
                       {!feeTier && <span style={{ color: "#7a8794" }}>₹{s.fee}</span>}
                     </span>
                   </label>
-                ))}
+                  );
+                })}
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, fontSize: 13.5 }}>
                   <span style={{ color: "#5f6d7a" }}>{fee.count} subject(s) selected</span>
                   <span style={{ fontWeight: 700, color: "#1a3a5c" }}>Total fee: ₹{fee.total}</span>
@@ -1742,7 +1760,10 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
             {!draft.feeTier && <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>FEE</div>}
             <div />
           </div>
-          {draft.subjects.map((s, i) => (
+          {draft.subjects
+            .map((s, i) => ({ s, i }))
+            .sort((a, b) => (a.s.date || "9999-99-99").localeCompare(b.s.date || "9999-99-99"))
+            .map(({ s, i }) => (
             <div key={i} style={{ display: "grid", gridTemplateColumns: `minmax(160px, 1fr) 138px 16px 138px ${draft.feeTier ? "" : "80px "}22px`, gap: 8, marginBottom: 6, alignItems: "center" }}>
               <input style={inputStyle} placeholder="Subject name" value={s.name} onChange={(e) => updateDraftSubject(i, "name", e.target.value)} />
               <input style={inputStyle} type="date" title="From date" value={s.date} onChange={(e) => updateDraftSubject(i, "date", e.target.value)} />
