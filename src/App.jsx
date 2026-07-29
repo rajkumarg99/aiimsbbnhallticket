@@ -1435,7 +1435,7 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
         {tab === "students" && <Applications regs={regs} persist={persist} nextSeq={nextSeq} courses={courses} settings={settings} />}
         {tab === "hallticket" && <HallTickets regs={regs} courses={courses} settings={settings} />}
         {tab === "courses" && <CoursesAdmin courses={courses} persistCourses={persistCourses} settings={settings} regs={regs} persist={persist} />}
-        {tab === "students-master" && <StudentMasterAdmin studentMaster={studentMaster} persistStudentMaster={persistStudentMaster} settings={settings} persistSettings={persistSettings} />}
+        {tab === "students-master" && <StudentMasterAdmin studentMaster={studentMaster} persistStudentMaster={persistStudentMaster} settings={settings} persistSettings={persistSettings} regs={regs} />}
         {tab === "settings" && <SettingsAdmin settings={settings} persistSettings={persistSettings} />}
         {tab === "receipts" && <ReceiptsSheet regs={regs} />}
         {tab === "reports" && <Reports regs={regs} courses={courses} />}
@@ -1449,12 +1449,35 @@ function emptyCourseDraft() {
   return { id: null, originalName: null, name: "", code: "", feeTier: "", examTitle: "", subjects: [{ id: subjId(), name: "", fee: 100, date: "", dateTo: "" }] };
 }
 
-function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, persistSettings }) {
+function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, persistSettings, regs }) {
   const fileRef = useRef(null);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");
   const [rollCharsDraft, setRollCharsDraft] = useState(settings.rollNoAllowedSpecialChars);
   const [rollCharsSaved, setRollCharsSaved] = useState(false);
+  const [showNotApplied, setShowNotApplied] = useState(false);
+
+  const notApplied = useMemo(() => {
+    const appliedRolls = new Set(
+      (regs || [])
+        .map((r) => sanitizeRollNo(r.hallTicketNo, settings.rollNoAllowedSpecialChars))
+        .filter(Boolean)
+    );
+    return studentMaster.filter((s) => {
+      const roll = sanitizeRollNo(s.roll_no, settings.rollNoAllowedSpecialChars);
+      return roll && !appliedRolls.has(roll);
+    });
+  }, [studentMaster, regs, settings.rollNoAllowedSpecialChars]);
+
+  function downloadNotApplied() {
+    const csv = toCSV(notApplied, [
+      { label: "roll_no", get: (r) => r.roll_no },
+      { label: "mobile", get: (r) => r.mobile },
+      { label: "dob", get: (r) => r.dob },
+      { label: "name", get: (r) => r.name },
+    ]);
+    download("students_not_applied.csv", csv, "text/csv");
+  }
 
   function saveRollChars() {
     persistSettings({ ...settings, rollNoAllowedSpecialChars: rollCharsDraft });
@@ -1563,6 +1586,46 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
           </table>
           {studentMaster.length > 200 && <div style={{ padding: 8, fontSize: 11, color: "#a2adb8" }}>Showing first 200 of {studentMaster.length}.</div>}
         </div>
+      )}
+
+      {studentMaster.length > 0 && (
+        <>
+          <h4 style={{ fontSize: 12.5, color: "#274566", margin: "18px 0 8px" }}>Who hasn't applied yet</h4>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <div style={{ fontSize: 13, color: "#1c2b3a" }}>
+              <b>{notApplied.length}</b> of {studentMaster.length} student(s) on the list have not submitted an application
+            </div>
+            <Btn variant="outline" onClick={() => setShowNotApplied((v) => !v)}>{showNotApplied ? "Hide list" : "Show list"}</Btn>
+            {notApplied.length > 0 && <Btn variant="outline" onClick={downloadNotApplied}><Download size={13} /> Download CSV</Btn>}
+          </div>
+          {showNotApplied && (
+            notApplied.length === 0 ? (
+              <p style={{ fontSize: 12.5, color: "#7a8794" }}>Everyone on the current list has an application on file.</p>
+            ) : (
+              <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid #eef1f5", borderRadius: 6 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#f7f9fb", textAlign: "left" }}>
+                      <th style={{ padding: "6px 10px" }}>Roll No.</th>
+                      <th style={{ padding: "6px 10px" }}>Mobile</th>
+                      <th style={{ padding: "6px 10px" }}>Name</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {notApplied.slice(0, 200).map((s, i) => (
+                      <tr key={i} style={{ borderTop: "1px solid #eef1f5" }}>
+                        <td style={{ padding: "6px 10px" }}>{s.roll_no}</td>
+                        <td style={{ padding: "6px 10px" }}>{s.mobile}</td>
+                        <td style={{ padding: "6px 10px" }}>{s.name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {notApplied.length > 200 && <div style={{ padding: 8, fontSize: 11, color: "#a2adb8" }}>Showing first 200 of {notApplied.length}.</div>}
+              </div>
+            )
+          )}
+        </>
       )}
     </div>
   );
