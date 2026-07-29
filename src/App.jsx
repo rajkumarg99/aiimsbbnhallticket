@@ -277,6 +277,28 @@ async function uploadToStorage(fileOrDataUrl, path, contentType) {
   return data.publicUrl;
 }
 
+function storagePathsForApplication(r) {
+  const paths = [];
+  const isStorageUrl = (u) => u && !u.startsWith("data:");
+  if (isStorageUrl(r.photo?.dataUrl)) paths.push(`photos/${r.id}.jpg`);
+  if (isStorageUrl(r.signature?.dataUrl)) paths.push(`signatures/${r.id}.jpg`);
+  if (isStorageUrl(r.receipt?.dataUrl)) {
+    const ext = r.receipt.name && r.receipt.name.includes(".") ? r.receipt.name.split(".").pop() : "jpg";
+    paths.push(`receipts/${r.id}.${ext}`);
+  }
+  return paths;
+}
+
+async function deleteStorageFilesForApplications(list) {
+  const allPaths = list.flatMap(storagePathsForApplication);
+  if (allPaths.length === 0) return;
+  try {
+    await supabase.storage.from("uploads").remove(allPaths);
+  } catch (e) {
+    console.error("Could not remove Storage files:", e.message);
+  }
+}
+
 async function urlToBase64(url) {
   const resp = await fetch(url);
   const blob = await resp.blob();
@@ -1733,6 +1755,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
     if (!confirmed) return;
     const remaining = regs.filter((r) => r.course !== name);
     await persist(remaining);
+    await deleteStorageFilesForApplications(matching);
     window.alert(`Deleted ${matching.length} application(s) for "${name}".`);
   }
 
@@ -2026,6 +2049,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
     if (!window.confirm(`Permanently delete the application for "${reg.name}" (${reg.id})? This cannot be undone.`)) return;
     const updated = regs.filter((r) => r.id !== reg.id);
     await persist(updated);
+    await deleteStorageFilesForApplications([reg]);
     setOpenId(null);
   }
 
