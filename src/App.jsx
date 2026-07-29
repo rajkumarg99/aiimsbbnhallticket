@@ -417,6 +417,7 @@ function rowsToRegs(appRows, appSubjectRows) {
     name: a.name,
     father: a.father,
     dob: a.dob,
+    gender: a.gender || "",
     mobile: a.mobile,
     guardianMobile: a.guardian_mobile,
     permAddress: a.perm_address,
@@ -639,6 +640,7 @@ export default function App() {
           name: r.name,
           father: r.father,
           dob: r.dob || null,
+          gender: r.gender || null,
           mobile: r.mobile,
           guardian_mobile: r.guardianMobile,
           perm_address: r.permAddress,
@@ -869,7 +871,7 @@ function Landing({ onPick }) {
 }
 
 const emptyForm = {
-  name: "", father: "", dob: "", mobile: "", guardianMobile: "",
+  name: "", father: "", dob: "", gender: "", mobile: "", guardianMobile: "",
   permAddress: "", commAddress: "", sameAsPerm: false,
   hallTicketNo: "",
   photo: null, signature: null, signatureMode: "upload",
@@ -1013,7 +1015,7 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
 
   function validate() {
     if (!form.hallTicketNo) return "Enter your roll number as intimated by the Examination Cell.";
-    if (!form.name || !form.father || !form.dob || !form.mobile || !form.course) return "Please fill in all required personal and course details.";
+    if (!form.name || !form.father || !form.dob || !form.gender || !form.mobile || !form.course) return "Please fill in all required personal and course details.";
     if (!/^[0-9]{10}$/.test(form.mobile)) return "Enter a valid 10-digit student mobile number.";
     if (!form.permAddress) return "Permanent address is required.";
     if (!form.sameAsPerm && !form.commAddress) return "Communication address is required.";
@@ -1037,7 +1039,7 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
       hallTicketNo: form.hallTicketNo.trim(),
       status: "pending",
       submittedAt: new Date().toISOString(),
-      name: form.name, father: form.father, dob: form.dob,
+      name: form.name, father: form.father, dob: form.dob, gender: form.gender,
       mobile: form.mobile, guardianMobile: form.guardianMobile,
       permAddress: form.permAddress,
       commAddress: form.sameAsPerm ? form.permAddress : form.commAddress,
@@ -1128,6 +1130,14 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
               </Field>
               <Field label="Date of birth (as per Class 10 certificate)" required>
                 <input type="date" style={inputStyle} value={form.dob} onChange={(e) => update("dob", e.target.value)} />
+              </Field>
+              <Field label="Gender" required>
+                <select style={inputStyle} value={form.gender} onChange={(e) => update("gender", e.target.value)}>
+                  <option value="">Select gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
               </Field>
               <Field label="Student mobile number" required hint="10 digits">
                 <input style={inputStyle} value={form.mobile} maxLength={10} onChange={(e) => update("mobile", e.target.value.replace(/\D/g, ""))} />
@@ -1445,7 +1455,7 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
         {tab === "courses" && <CoursesAdmin courses={courses} persistCourses={persistCourses} settings={settings} regs={regs} persist={persist} />}
         {tab === "students-master" && <StudentMasterAdmin studentMaster={studentMaster} persistStudentMaster={persistStudentMaster} settings={settings} persistSettings={persistSettings} regs={regs} />}
         {tab === "settings" && <SettingsAdmin settings={settings} persistSettings={persistSettings} />}
-        {tab === "receipts" && <ReceiptsSheet regs={regs} />}
+        {tab === "receipts" && <ReceiptsSheet regs={regs} courses={courses} />}
         {tab === "reports" && <Reports regs={regs} courses={courses} />}
         {tab === "backup" && <ConfigBackup courses={courses} persistCourses={persistCourses} settings={settings} persistSettings={persistSettings} />}
       </div>
@@ -1966,7 +1976,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
     setEditId(r.id);
     setEditDraft({
       hallTicketNo: r.hallTicketNo || "",
-      name: r.name, father: r.father, dob: r.dob, mobile: r.mobile, guardianMobile: r.guardianMobile,
+      name: r.name, father: r.father, dob: r.dob, gender: r.gender || "", mobile: r.mobile, guardianMobile: r.guardianMobile,
       permAddress: r.permAddress, commAddress: r.commAddress, course: r.course,
       subjects: (r.subjects || []).map((s) => liveSubject(courses, r.course, s).name),
     });
@@ -2001,7 +2011,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
     const updated = regs.map((r) => r.id === reg.id ? {
       ...r,
       hallTicketNo: editDraft.hallTicketNo.trim(),
-      name: editDraft.name, father: editDraft.father, dob: editDraft.dob,
+      name: editDraft.name, father: editDraft.father, dob: editDraft.dob, gender: editDraft.gender,
       mobile: editDraft.mobile, guardianMobile: editDraft.guardianMobile,
       permAddress: editDraft.permAddress, commAddress: editDraft.commAddress,
       course: editDraft.course, subjects, totalFee,
@@ -2086,6 +2096,14 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                       <Field label="Candidate name"><input style={{ ...inputStyle, textTransform: "uppercase" }} value={editDraft.name} onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value.toUpperCase() }))} /></Field>
                       <Field label="Father / Guardian name"><input style={{ ...inputStyle, textTransform: "uppercase" }} value={editDraft.father} onChange={(e) => setEditDraft((d) => ({ ...d, father: e.target.value.toUpperCase() }))} /></Field>
                       <Field label="Date of birth"><input type="date" style={inputStyle} value={editDraft.dob} onChange={(e) => setEditDraft((d) => ({ ...d, dob: e.target.value }))} /></Field>
+                      <Field label="Gender">
+                        <select style={inputStyle} value={editDraft.gender} onChange={(e) => setEditDraft((d) => ({ ...d, gender: e.target.value }))}>
+                          <option value="">Select gender</option>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                          <option value="Other">Other</option>
+                        </select>
+                      </Field>
                       <Field label="Student mobile"><input style={inputStyle} value={editDraft.mobile} maxLength={10} onChange={(e) => setEditDraft((d) => ({ ...d, mobile: e.target.value.replace(/\D/g, "") }))} /></Field>
                       <Field label="Guardian mobile"><input style={inputStyle} value={editDraft.guardianMobile} maxLength={10} onChange={(e) => setEditDraft((d) => ({ ...d, guardianMobile: e.target.value.replace(/\D/g, "") }))} /></Field>
                     </div>
@@ -2137,6 +2155,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                     <div>
                       <DetailRow label="Father / Guardian" value={r.father} />
                       <DetailRow label="Date of birth" value={r.dob} />
+                      <DetailRow label="Gender" value={r.gender || "—"} />
                       <DetailRow label="Guardian mobile" value={r.guardianMobile || "—"} />
                       <DetailRow label="Permanent address" value={r.permAddress} />
                       <DetailRow label="Communication address" value={r.commAddress} />
@@ -2601,8 +2620,10 @@ function ReceiptCard({ r }) {
   );
 }
 
-function ReceiptsSheet({ regs }) {
-  const withReceipts = sortByRoll(regs.filter((r) => r.receipt));
+function ReceiptsSheet({ regs, courses }) {
+  const [courseFilter, setCourseFilter] = useState("");
+  const filtered = courseFilter ? regs.filter((r) => r.course === courseFilter) : regs;
+  const withReceipts = sortByRoll(filtered.filter((r) => r.receipt));
   const pages = chunk(withReceipts, 4);
 
   return (
@@ -2619,8 +2640,15 @@ function ReceiptsSheet({ regs }) {
         )}
       </div>
 
+      <div style={{ margin: "12px 0" }}>
+        <select style={{ ...inputStyle, maxWidth: 320 }} value={courseFilter} onChange={(e) => setCourseFilter(e.target.value)}>
+          <option value="">All courses</option>
+          {Object.keys(courses).map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
       {pages.length === 0 ? (
-        <p style={{ fontSize: 13, color: "#7a8794", marginTop: 12 }}>No payment receipts have been uploaded yet.</p>
+        <p style={{ fontSize: 13, color: "#7a8794", marginTop: 12 }}>No payment receipts {courseFilter ? "for this course " : ""}have been uploaded yet.</p>
       ) : (
         <div className="print-area" style={{ marginTop: 16 }}>
           {pages.map((page, pi) => (
@@ -2787,6 +2815,7 @@ function Reports({ regs, courses }) {
     { label: "Application ID", get: (r) => r.id },
     { label: "Roll No.", get: (r) => r.hallTicketNo || "" },
     { label: "Name", get: (r) => r.name },
+    { label: "Gender", get: (r) => r.gender || "" },
     { label: "Father/Guardian", get: (r) => r.father },
     { label: "Mobile", get: (r) => r.mobile },
     { label: "Course", get: (r) => r.course },
