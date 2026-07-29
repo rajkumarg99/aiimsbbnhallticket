@@ -1832,10 +1832,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
             {!draft.feeTier && <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>FEE</div>}
             <div />
           </div>
-          {draft.subjects
-            .map((s, i) => ({ s, i }))
-            .sort((a, b) => (a.s.date || "9999-99-99").localeCompare(b.s.date || "9999-99-99"))
-            .map(({ s, i }) => (
+          {draft.subjects.map((s, i) => (
             <div key={i} style={{ display: "grid", gridTemplateColumns: `minmax(140px, 1fr) 112px 14px 112px 110px ${draft.feeTier ? "" : "70px "}22px`, gap: 8, marginBottom: 6, alignItems: "center" }}>
               <input style={inputStyle} placeholder="Subject name" value={s.name} onChange={(e) => updateDraftSubject(i, "name", e.target.value)} />
               <input style={inputStyle} type="date" title="From date" value={s.date} onChange={(e) => updateDraftSubject(i, "date", e.target.value)} />
