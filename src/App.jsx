@@ -20,7 +20,7 @@ function genId(prefix) {
 }
 
 function subj(name, fee) {
-  return { id: subjId(), name, fee, date: "", dateTo: "" };
+  return { id: subjId(), name, fee, date: "", dateTo: "", linkGroup: "" };
 }
 
 const DEFAULT_COURSES = {
@@ -952,15 +952,21 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
     setForm((f) => {
       const turningOn = !f.subjects[name];
       const nextSubjects = { ...f.subjects, [name]: turningOn };
-      if (turningOn) {
-        const target = courseSubjects.find((s) => s.name === name);
-        if (target && target.date) {
-          courseSubjects.forEach((s) => {
-            if (s.name !== name && s.date === target.date) {
-              nextSubjects[s.name] = false;
-            }
-          });
-        }
+      const target = courseSubjects.find((s) => s.name === name);
+      if (turningOn && target && target.date) {
+        courseSubjects.forEach((s) => {
+          const linked = target.linkGroup && s.linkGroup === target.linkGroup;
+          if (s.name !== name && s.date === target.date && !linked) {
+            nextSubjects[s.name] = false;
+          }
+        });
+      }
+      if (target && target.linkGroup) {
+        courseSubjects.forEach((s) => {
+          if (s.name !== name && s.linkGroup === target.linkGroup) {
+            nextSubjects[s.name] = turningOn;
+          }
+        });
       }
       return { ...f, subjects: nextSubjects };
     });
@@ -1183,13 +1189,15 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
                   </p>
                 )}
                 {sortSubjectsByDate(courseSubjects).map((s) => {
-                  const clashes = s.date && courseSubjects.some((other) => other.name !== s.name && other.date === s.date);
+                  const clashes = s.date && courseSubjects.some((other) => other.name !== s.name && other.date === s.date && !(s.linkGroup && other.linkGroup === s.linkGroup));
+                  const partners = s.linkGroup ? courseSubjects.filter((other) => other.name !== s.name && other.linkGroup === s.linkGroup).map((o) => o.name) : [];
                   return (
                   <label key={s.name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #ecf0f4", fontSize: 13.5 }}>
                     <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <input type="checkbox" checked={!!form.subjects[s.name]} onChange={() => toggleSubject(s.name)} />
                       {s.name}
                       {clashes && <span style={{ fontSize: 10, color: "#a13a2f", fontStyle: "italic" }}>(same date — pick only one)</span>}
+                      {partners.length > 0 && <span style={{ fontSize: 10, color: "#1a3a5c", fontStyle: "italic" }}>(selected together with {partners.join(", ")})</span>}
                     </span>
                     <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <span style={{ fontSize: 11.5, color: "#8a6116" }}>{formatExamDateRange(s)}</span>
@@ -1446,7 +1454,7 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
 }
 
 function emptyCourseDraft() {
-  return { id: null, originalName: null, name: "", code: "", feeTier: "", examTitle: "", subjects: [{ id: subjId(), name: "", fee: 100, date: "", dateTo: "" }] };
+  return { id: null, originalName: null, name: "", code: "", feeTier: "", examTitle: "", subjects: [{ id: subjId(), name: "", fee: 100, date: "", dateTo: "", linkGroup: "" }] };
 }
 
 function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, persistSettings, regs }) {
@@ -1726,7 +1734,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
   function startEdit(name) {
     setErr("");
     const c = courses[name];
-    setDraft({ id: c.id || genId("course"), originalName: name, name, code: c.code, feeTier: c.feeTier || "", examTitle: c.examTitle || "", subjects: c.subjects.map((s) => ({ id: s.id || subjId(), name: s.name, fee: s.fee, date: s.date || "", dateTo: s.dateTo || "" })) });
+    setDraft({ id: c.id || genId("course"), originalName: name, name, code: c.code, feeTier: c.feeTier || "", examTitle: c.examTitle || "", subjects: c.subjects.map((s) => ({ id: s.id || subjId(), name: s.name, fee: s.fee, date: s.date || "", dateTo: s.dateTo || "", linkGroup: s.linkGroup || "" })) });
   }
 
   function updateDraftSubject(i, field, val) {
@@ -1734,7 +1742,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
   }
 
   function addSubjectRow() {
-    setDraft((d) => ({ ...d, subjects: [...d.subjects, { id: subjId(), name: "", fee: 0, date: "", dateTo: "" }] }));
+    setDraft((d) => ({ ...d, subjects: [...d.subjects, { id: subjId(), name: "", fee: 0, date: "", dateTo: "", linkGroup: "" }] }));
   }
 
   function removeSubjectRow(i) {
@@ -1755,7 +1763,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
       code: draft.code.trim(),
       feeTier: draft.feeTier || undefined,
       examTitle: draft.examTitle || "",
-      subjects: cleanSubjects.map((s) => ({ id: s.id || subjId(), name: s.name.trim(), fee: draft.feeTier ? 0 : Number(s.fee) || 0, date: s.date || "", dateTo: s.dateTo || "" })),
+      subjects: cleanSubjects.map((s) => ({ id: s.id || subjId(), name: s.name.trim(), fee: draft.feeTier ? 0 : Number(s.fee) || 0, date: s.date || "", dateTo: s.dateTo || "", linkGroup: (s.linkGroup || "").trim() })),
       active: draft.originalName ? (courses[draft.originalName]?.active !== false) : true,
     };
     await persistCourses(next);
@@ -1814,12 +1822,13 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
             </select>
           </Field>
           <div style={{ fontSize: 12.5, fontWeight: 600, color: "#5f6d7a", margin: "10px 0 6px" }}>Subjects & exam dates</div>
-          <div style={{ fontSize: 11, color: "#a2adb8", marginBottom: 6 }}>For subjects held over more than one day (e.g. Practical), set both a "from" and "to" date.</div>
-          <div style={{ display: "grid", gridTemplateColumns: `minmax(160px, 1fr) 138px 16px 138px ${draft.feeTier ? "" : "80px "}22px`, gap: 8, alignItems: "center", marginBottom: 4 }}>
+          <div style={{ fontSize: 11, color: "#a2adb8", marginBottom: 6 }}>For subjects held over more than one day (e.g. Practical), set both a "from" and "to" date. To require two entries to always be selected together (e.g. "Anatomy Paper I" and "Anatomy Paper II"), give both the same Paper group name — selecting one will automatically select the other, and they can't be selected separately.</div>
+          <div style={{ display: "grid", gridTemplateColumns: `minmax(140px, 1fr) 112px 14px 112px 110px ${draft.feeTier ? "" : "70px "}22px`, gap: 8, alignItems: "center", marginBottom: 4 }}>
             <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>SUBJECT NAME</div>
             <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>FROM</div>
             <div />
             <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>TO</div>
+            <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>PAPER GROUP</div>
             {!draft.feeTier && <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>FEE</div>}
             <div />
           </div>
@@ -1827,11 +1836,12 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
             .map((s, i) => ({ s, i }))
             .sort((a, b) => (a.s.date || "9999-99-99").localeCompare(b.s.date || "9999-99-99"))
             .map(({ s, i }) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: `minmax(160px, 1fr) 138px 16px 138px ${draft.feeTier ? "" : "80px "}22px`, gap: 8, marginBottom: 6, alignItems: "center" }}>
+            <div key={i} style={{ display: "grid", gridTemplateColumns: `minmax(140px, 1fr) 112px 14px 112px 110px ${draft.feeTier ? "" : "70px "}22px`, gap: 8, marginBottom: 6, alignItems: "center" }}>
               <input style={inputStyle} placeholder="Subject name" value={s.name} onChange={(e) => updateDraftSubject(i, "name", e.target.value)} />
               <input style={inputStyle} type="date" title="From date" value={s.date} onChange={(e) => updateDraftSubject(i, "date", e.target.value)} />
               <span style={{ fontSize: 11, color: "#a2adb8", textAlign: "center" }}>to</span>
               <input style={inputStyle} type="date" title="To date (optional)" value={s.dateTo} onChange={(e) => updateDraftSubject(i, "dateTo", e.target.value)} />
+              <input style={inputStyle} placeholder="e.g. Anatomy" title="Paper group (optional)" value={s.linkGroup} onChange={(e) => updateDraftSubject(i, "linkGroup", e.target.value)} />
               {!draft.feeTier && (
                 <input style={inputStyle} type="number" placeholder="Fee" value={s.fee} onChange={(e) => updateDraftSubject(i, "fee", e.target.value)} />
               )}
@@ -1973,7 +1983,19 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
   function toggleEditSubject(name) {
     setEditDraft((d) => {
       const has = d.subjects.includes(name);
-      return { ...d, subjects: has ? d.subjects.filter((s) => s !== name) : [...d.subjects, name] };
+      const turningOn = !has;
+      let nextList = has ? d.subjects.filter((s) => s !== name) : [...d.subjects, name];
+      const courseSubjectList = courses[d.course]?.subjects || [];
+      const target = courseSubjectList.find((s) => s.name === name);
+      if (target && target.linkGroup) {
+        const partners = courseSubjectList.filter((s) => s.name !== name && s.linkGroup === target.linkGroup).map((s) => s.name);
+        partners.forEach((pName) => {
+          const already = nextList.includes(pName);
+          if (turningOn && !already) nextList = [...nextList, pName];
+          if (!turningOn && already) nextList = nextList.filter((s) => s !== pName);
+        });
+      }
+      return { ...d, subjects: nextList };
     });
   }
 
@@ -2091,17 +2113,21 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                           : "₹20 for one subject, ₹30 for two subjects, ₹60 for three or more subjects."}
                       </div>
                     )}
-                    {sortSubjectsByDate(courses[editDraft.course]?.subjects || []).map((s) => (
+                    {sortSubjectsByDate(courses[editDraft.course]?.subjects || []).map((s) => {
+                      const partners = s.linkGroup ? (courses[editDraft.course]?.subjects || []).filter((o) => o.name !== s.name && o.linkGroup === s.linkGroup).map((o) => o.name) : [];
+                      return (
                       <label key={s.name} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13 }}>
                         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <input type="checkbox" checked={editDraft.subjects.includes(s.name)} onChange={() => toggleEditSubject(s.name)} /> {s.name}
+                          {partners.length > 0 && <span style={{ fontSize: 9.5, color: "#1a3a5c", fontStyle: "italic" }}>(with {partners.join(", ")})</span>}
                         </span>
                         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                           <span style={{ fontSize: 10.5, color: "#8a6116" }}>{formatExamDateRange(s)}</span>
                           {!courses[editDraft.course]?.feeTier && <span style={{ color: "#7a8794" }}>₹{s.fee}</span>}
                         </span>
                       </label>
-                    ))}
+                      );
+                    })}
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <Btn onClick={() => saveEdit(r)}><CheckCircle2 size={14} /> Save changes</Btn>
