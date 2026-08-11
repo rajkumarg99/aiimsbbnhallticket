@@ -20,7 +20,7 @@ function genId(prefix) {
 }
 
 function subj(name, fee) {
-  return { id: subjId(), name, fee, date: "", dateTo: "", linkGroup: "" };
+  return { id: subjId(), name, fee, date: "", dateTo: "", time: "", linkGroup: "" };
 }
 
 const DEFAULT_COURSES = {
@@ -65,7 +65,7 @@ function computeFee(courses, courseName, subjectNames) {
   } else {
     total = chosen.reduce((s, x) => s + x.fee, 0);
   }
-  return { count, total, subjects: chosen.map((s) => ({ id: s.id, name: s.name, date: s.date || "", dateTo: s.dateTo || "" })) };
+  return { count, total, subjects: chosen.map((s) => ({ id: s.id, name: s.name, date: s.date || "", dateTo: s.dateTo || "", time: s.time || "" })) };
 }
 
 // Resolves a subject snapshot (stored on an application) against the current
@@ -91,8 +91,8 @@ function formatExamDate(iso) {
 
 function formatExamDateRange(s) {
   if (!s.date) return "Date to be announced";
-  if (s.dateTo && s.dateTo !== s.date) return `${formatExamDate(s.date)} – ${formatExamDate(s.dateTo)}`;
-  return formatExamDate(s.date);
+  const range = (s.dateTo && s.dateTo !== s.date) ? `${formatExamDate(s.date)} – ${formatExamDate(s.dateTo)}` : formatExamDate(s.date);
+  return s.time ? `${range}, ${s.time}` : range;
 }
 
 function sanitizeRollNo(value, allowedSpecialChars) {
@@ -425,7 +425,7 @@ function rowsToCourses(courseRows, subjectRows) {
       active: c.active !== false,
       subjects: (subjectRows || [])
         .filter((s) => s.course_id === c.id)
-        .map((s) => ({ id: s.id, name: s.name, fee: Number(s.fee) || 0, date: s.exam_date || "", dateTo: s.exam_date_to || "" })),
+        .map((s) => ({ id: s.id, name: s.name, fee: Number(s.fee) || 0, date: s.exam_date || "", dateTo: s.exam_date_to || "", time: s.exam_time || "", linkGroup: s.link_group || "" })),
     };
   });
   return courses;
@@ -450,7 +450,7 @@ function rowsToRegs(appRows, appSubjectRows) {
     course: a.course_name,
     subjects: (appSubjectRows || [])
       .filter((s) => s.application_id === a.id)
-      .map((s) => ({ id: s.subject_id, name: s.subject_name, date: s.exam_date || "", dateTo: s.exam_date_to || "" })),
+      .map((s) => ({ id: s.subject_id, name: s.subject_name, date: s.exam_date || "", dateTo: s.exam_date_to || "", time: s.exam_time || "" })),
     totalFee: Number(a.total_fee) || 0,
     utr: a.utr,
     receipt: a.receipt_data_url ? { dataUrl: a.receipt_data_url, name: a.receipt_name, type: a.receipt_type, size: a.receipt_size } : null,
@@ -691,6 +691,7 @@ export default function App() {
               subject_name: s.name,
               exam_date: s.date || null,
               exam_date_to: s.dateTo || null,
+              exam_time: s.time || null,
             }))
           );
         }
@@ -736,6 +737,8 @@ export default function App() {
             fee: s.fee || 0,
             exam_date: s.date || null,
             exam_date_to: s.dateTo || null,
+            exam_time: s.time || null,
+            link_group: s.linkGroup || null,
           });
         }
       }
@@ -1486,7 +1489,7 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
 }
 
 function emptyCourseDraft() {
-  return { id: null, originalName: null, name: "", code: "", feeTier: "", examTitle: "", subjects: [{ id: subjId(), name: "", fee: 100, date: "", dateTo: "", linkGroup: "" }] };
+  return { id: null, originalName: null, name: "", code: "", feeTier: "", examTitle: "", subjects: [{ id: subjId(), name: "", fee: 100, date: "", dateTo: "", time: "", linkGroup: "" }] };
 }
 
 function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, persistSettings, regs }) {
@@ -1767,7 +1770,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
   function startEdit(name) {
     setErr("");
     const c = courses[name];
-    setDraft({ id: c.id || genId("course"), originalName: name, name, code: c.code, feeTier: c.feeTier || "", examTitle: c.examTitle || "", subjects: c.subjects.map((s) => ({ id: s.id || subjId(), name: s.name, fee: s.fee, date: s.date || "", dateTo: s.dateTo || "", linkGroup: s.linkGroup || "" })) });
+    setDraft({ id: c.id || genId("course"), originalName: name, name, code: c.code, feeTier: c.feeTier || "", examTitle: c.examTitle || "", subjects: c.subjects.map((s) => ({ id: s.id || subjId(), name: s.name, fee: s.fee, date: s.date || "", dateTo: s.dateTo || "", time: s.time || "", linkGroup: s.linkGroup || "" })) });
   }
 
   function updateDraftSubject(i, field, val) {
@@ -1796,7 +1799,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
       code: draft.code.trim(),
       feeTier: draft.feeTier || undefined,
       examTitle: draft.examTitle || "",
-      subjects: cleanSubjects.map((s) => ({ id: s.id || subjId(), name: s.name.trim(), fee: draft.feeTier ? 0 : Number(s.fee) || 0, date: s.date || "", dateTo: s.dateTo || "", linkGroup: (s.linkGroup || "").trim() })),
+      subjects: cleanSubjects.map((s) => ({ id: s.id || subjId(), name: s.name.trim(), fee: draft.feeTier ? 0 : Number(s.fee) || 0, date: s.date || "", dateTo: s.dateTo || "", time: (s.time || "").trim(), linkGroup: (s.linkGroup || "").trim() })),
       active: draft.originalName ? (courses[draft.originalName]?.active !== false) : true,
     };
     await persistCourses(next);
@@ -1855,22 +1858,24 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
             </select>
           </Field>
           <div style={{ fontSize: 12.5, fontWeight: 600, color: "#5f6d7a", margin: "10px 0 6px" }}>Subjects & exam dates</div>
-          <div style={{ fontSize: 11, color: "#a2adb8", marginBottom: 6 }}>For subjects held over more than one day (e.g. Practical), set both a "from" and "to" date. To require two entries to always be selected together (e.g. "Anatomy Paper I" and "Anatomy Paper II"), give both the same Paper group name — selecting one will automatically select the other, and they can't be selected separately.</div>
-          <div style={{ display: "grid", gridTemplateColumns: `minmax(140px, 1fr) 112px 14px 112px 110px ${draft.feeTier ? "" : "70px "}22px`, gap: 8, alignItems: "center", marginBottom: 4 }}>
+          <div style={{ fontSize: 11, color: "#a2adb8", marginBottom: 6 }}>For subjects held over more than one day (e.g. Practical), set both a "from" and "to" date. Timing (e.g. "10:00 AM \u2013 1:00 PM") is optional and printed on the hall ticket next to the date. To require two entries to always be selected together (e.g. "Anatomy Paper I" and "Anatomy Paper II"), give both the same Paper group name — selecting one will automatically select the other, and they can't be selected separately.</div>
+          <div style={{ display: "grid", gridTemplateColumns: `minmax(130px, 1fr) 106px 12px 106px 100px 100px ${draft.feeTier ? "" : "64px "}20px`, gap: 6, alignItems: "center", marginBottom: 4 }}>
             <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>SUBJECT NAME</div>
             <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>FROM</div>
             <div />
             <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>TO</div>
+            <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>TIMING</div>
             <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>PAPER GROUP</div>
             {!draft.feeTier && <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>FEE</div>}
             <div />
           </div>
           {draft.subjects.map((s, i) => (
-            <div key={s.id} style={{ display: "grid", gridTemplateColumns: `minmax(140px, 1fr) 112px 14px 112px 110px ${draft.feeTier ? "" : "70px "}22px`, gap: 8, marginBottom: 6, alignItems: "center" }}>
+            <div key={s.id} style={{ display: "grid", gridTemplateColumns: `minmax(130px, 1fr) 106px 12px 106px 100px 100px ${draft.feeTier ? "" : "64px "}20px`, gap: 6, marginBottom: 6, alignItems: "center" }}>
               <input style={inputStyle} placeholder="Subject name" value={s.name} onChange={(e) => updateDraftSubject(i, "name", e.target.value)} />
               <input style={inputStyle} type="date" title="From date" value={s.date} onChange={(e) => updateDraftSubject(i, "date", e.target.value)} />
               <span style={{ fontSize: 11, color: "#a2adb8", textAlign: "center" }}>to</span>
               <input style={inputStyle} type="date" title="To date (optional)" value={s.dateTo} onChange={(e) => updateDraftSubject(i, "dateTo", e.target.value)} />
+              <input style={inputStyle} placeholder="10 AM\u20131 PM" title="Timing (optional)" value={s.time} onChange={(e) => updateDraftSubject(i, "time", e.target.value)} />
               <input style={inputStyle} placeholder="e.g. Anatomy" title="Paper group (optional)" value={s.linkGroup} onChange={(e) => updateDraftSubject(i, "linkGroup", e.target.value)} />
               {!draft.feeTier && (
                 <input style={inputStyle} type="number" placeholder="Fee" value={s.fee} onChange={(e) => updateDraftSubject(i, "fee", e.target.value)} />
@@ -2099,7 +2104,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
         <div key={r.id} style={{ background: "#fff", border: "1px solid #dde3ea", borderRadius: 10, marginBottom: 10, overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", cursor: "pointer" }} onClick={() => setOpenId(openId === r.id ? null : r.id)}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              {r.photo?.dataUrl && <img src={r.photo.dataUrl} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} />}
+              {r.photo?.dataUrl && <img src={r.photo.dataUrl} alt="" loading="lazy" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} />}
               <div>
                 <div style={{ fontWeight: 700, fontSize: 13.5, color: "#1c2b3a" }}>{r.name}</div>
                 <div style={{ fontSize: 11.5, color: "#7a8794" }}>{r.course} · {r.mobile} · {r.id}</div>
@@ -2624,7 +2629,7 @@ function ReceiptCard({ r }) {
       </div>
       <div style={{ flex: 1, minHeight: 0, border: "1px dashed #dde3ea", borderRadius: 6, overflow: "hidden", background: "#f7f9fb" }}>
         {r.receipt?.dataUrl && r.receipt.type !== "application/pdf" ? (
-          <img src={r.receipt.dataUrl} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+          <img src={r.receipt.dataUrl} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
         ) : (
           <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 8, boxSizing: "border-box" }}>
             {r.receipt?.dataUrl && r.receipt.type === "application/pdf" ? (
@@ -2747,17 +2752,18 @@ function safeFileToken(value, fallback) {
   return cleaned || fallback;
 }
 
-async function downloadPhotosAndSignaturesZip(regs, scope, onProgress) {
+async function downloadPhotosAndSignaturesZip(regs, scope, courseFilter, onProgress) {
   const JSZip = await loadJSZip();
   const zip = new JSZip();
-  const list = scope === "approved" ? regs.filter((r) => r.status === "approved") : regs;
+  let list = scope === "approved" ? regs.filter((r) => r.status === "approved") : regs;
+  if (courseFilter) list = list.filter((r) => r.course === courseFilter);
   let included = 0;
   let failed = 0;
   const jobs = [];
   list.forEach((r) => {
     const roll = safeFileToken(r.hallTicketNo, r.id);
-    if (r.photo?.dataUrl) jobs.push({ url: r.photo.dataUrl, name: `${roll}_photo` });
-    if (r.signature?.dataUrl) jobs.push({ url: r.signature.dataUrl, name: `${roll}_signature` });
+    if (r.photo?.dataUrl) jobs.push({ url: r.photo.dataUrl, name: `Photos/${roll}_photo` });
+    if (r.signature?.dataUrl) jobs.push({ url: r.signature.dataUrl, name: `Signatures/${roll}_signature` });
   });
   for (let i = 0; i < jobs.length; i++) {
     const { url, name } = jobs[i];
@@ -2779,14 +2785,15 @@ async function downloadPhotosAndSignaturesZip(regs, scope, onProgress) {
   const blob = await zip.generateAsync({ type: "blob" }, (meta) => onProgress && onProgress(90 + Math.round(meta.percent * 0.1)));
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = "aiims_photos_signatures.zip";
+  a.href = url; a.download = (courseFilter ? safeFileToken(courseFilter, "course") + "_" : "") + "aiims_photos_signatures.zip";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   return { ok: true, count: included, failed };
 }
 
-function PhotoSignatureExport({ regs }) {
+function PhotoSignatureExport({ regs, courses }) {
   const [scope, setScope] = useState("approved");
+  const [courseFilter, setCourseFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [err, setErr] = useState("");
@@ -2798,7 +2805,7 @@ function PhotoSignatureExport({ regs }) {
     setDone("");
     setProgress(0);
     try {
-      const result = await downloadPhotosAndSignaturesZip(regs, scope, setProgress);
+      const result = await downloadPhotosAndSignaturesZip(regs, scope, courseFilter, setProgress);
       if (!result.ok) setErr("No photos or signatures found for the selected applications.");
       else setDone(`Downloaded ${result.count} file(s).${result.failed ? ` (${result.failed} couldn't be fetched and were skipped.)` : ""}`);
     } catch (e) {
@@ -2811,13 +2818,17 @@ function PhotoSignatureExport({ regs }) {
     <div style={{ background: "#fff", border: "1px solid #dde3ea", borderRadius: 10, padding: 20, marginTop: 16 }}>
       <div style={{ fontWeight: 700, fontSize: 13.5, color: "#1c2b3a", marginBottom: 4 }}>Photos & signatures</div>
       <p style={{ fontSize: 12.5, color: "#7a8794", margin: "4px 0 14px" }}>
-        Download every uploaded photograph and signature as a ZIP file, each named by Roll No. (e.g.
-        "123456_photo.jpg", "123456_signature.jpg") so they can be dropped straight into a folder.
+        Download every uploaded photograph and signature as a ZIP file, organized into separate "Photos" and
+        "Signatures" folders, each file named by Roll No. (e.g. "123456_photo.jpg").
       </p>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <select style={{ ...inputStyle, maxWidth: 220 }} value={scope} onChange={(e) => setScope(e.target.value)}>
           <option value="approved">Approved applications only</option>
           <option value="all">All applications</option>
+        </select>
+        <select style={{ ...inputStyle, maxWidth: 220 }} value={courseFilter} onChange={(e) => setCourseFilter(e.target.value)}>
+          <option value="">All courses</option>
+          {Object.keys(courses || {}).map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
         <Btn onClick={run} disabled={busy}>
           {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />}
@@ -2835,6 +2846,8 @@ function PhotoSignatureExport({ regs }) {
 }
 
 function Reports({ regs, courses }) {
+  const [courseFilter, setCourseFilter] = useState("");
+  const scopedRegs = courseFilter ? regs.filter((r) => r.course === courseFilter) : regs;
   const baseCols = [
     { label: "Application ID", get: (r) => r.id },
     { label: "Roll No.", get: (r) => r.hallTicketNo || "" },
@@ -2851,30 +2864,34 @@ function Reports({ regs, courses }) {
   ];
 
   const reportsList = [
-    { name: "Student register (all applications)", rows: sortByRoll(regs) },
-    { name: "Approved applications", rows: sortByRoll(regs.filter((r) => r.status === "approved")) },
-    { name: "Pending applications", rows: sortByRoll(regs.filter((r) => r.status === "pending")) },
-    { name: "Rejected applications", rows: sortByRoll(regs.filter((r) => r.status === "rejected")) },
+    { name: "Student register (all applications)", rows: sortByRoll(scopedRegs) },
+    { name: "Approved applications", rows: sortByRoll(scopedRegs.filter((r) => r.status === "approved")) },
+    { name: "Pending applications", rows: sortByRoll(scopedRegs.filter((r) => r.status === "pending")) },
+    { name: "Rejected applications", rows: sortByRoll(scopedRegs.filter((r) => r.status === "rejected")) },
   ];
 
   return (
     <>
     <div style={{ background: "#fff", border: "1px solid #dde3ea", borderRadius: 10, padding: 20 }}>
       <div style={{ fontWeight: 700, fontSize: 13.5, color: "#1c2b3a", marginBottom: 4 }}>Reports & exports</div>
-      <p style={{ fontSize: 12.5, color: "#7a8794", marginBottom: 16 }}>Export application data as CSV (opens in Excel) for record-keeping and reconciliation.</p>
+      <p style={{ fontSize: 12.5, color: "#7a8794", marginBottom: 12 }}>Export application data as CSV (opens in Excel) for record-keeping and reconciliation.</p>
+      <select style={{ ...inputStyle, maxWidth: 320, marginBottom: 14 }} value={courseFilter} onChange={(e) => setCourseFilter(e.target.value)}>
+        <option value="">All courses</option>
+        {Object.keys(courses).map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
       {reportsList.map((rep) => (
         <div key={rep.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #eef1f5" }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#1c2b3a" }}>{rep.name}</div>
             <div style={{ fontSize: 11.5, color: "#7a8794" }}>{rep.rows.length} record(s)</div>
           </div>
-          <Btn variant="outline" disabled={rep.rows.length === 0} onClick={() => download(rep.name.replace(/\s+/g, "_").toLowerCase() + ".csv", toCSV(rep.rows, baseCols), "text/csv")}>
+          <Btn variant="outline" disabled={rep.rows.length === 0} onClick={() => download((courseFilter ? courseFilter.replace(/\s+/g, "_") + "_" : "") + rep.name.replace(/\s+/g, "_").toLowerCase() + ".csv", toCSV(rep.rows, baseCols), "text/csv")}>
             <FileSpreadsheet size={14} /> Export CSV
           </Btn>
         </div>
       ))}
     </div>
-    <PhotoSignatureExport regs={regs} />
+    <PhotoSignatureExport regs={regs} courses={courses} />
     </>
   );
 }
