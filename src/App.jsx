@@ -209,6 +209,7 @@ function defaultSettings() {
     logoDataUrl: null,
     paymentQrImageUrl: null,
     studentLoginEnabled: true,
+    studentListActive: false,
     studentLoginMethod: "rollDob",
     rollNoAllowedSpecialChars: ",\\/-",
     adminPassword: "admin123",
@@ -475,6 +476,7 @@ function settingsRowToObject(row) {
     logoDataUrl: row.logo_data_url || null,
     paymentQrImageUrl: row.payment_qr_image_url || null,
     studentLoginEnabled: row.student_login_enabled !== false,
+    studentListActive: row.student_list_active === true,
     adminPassword: row.admin_password || "admin123",
     registrationOpensAt: row.registration_opens_at || "",
     registrationClosesAt: row.registration_closes_at || "",
@@ -507,6 +509,7 @@ function settingsObjectToRow(s) {
     logo_data_url: s.logoDataUrl,
     payment_qr_image_url: s.paymentQrImageUrl,
     student_login_enabled: s.studentLoginEnabled !== false,
+    student_list_active: s.studentListActive === true,
     admin_password: s.adminPassword || "admin123",
     registration_opens_at: s.registrationOpensAt || null,
     registration_closes_at: s.registrationClosesAt || null,
@@ -589,6 +592,9 @@ export default function App() {
       await supabase.from("student_master").delete().neq("roll_no", "__none__");
       if (next.length > 0) {
         await supabase.from("student_master").insert(next.map((r) => ({ roll_no: r.roll_no || null, mobile: r.mobile || null, dob: r.dob || null, name: r.name || null })));
+      }
+      if ((next.length > 0) !== settings.studentListActive) {
+        await persistSettings({ ...settings, studentListActive: next.length > 0 });
       }
     } catch (e) {
       console.error("Supabase persist(student_master) error:", e.message);
@@ -799,7 +805,7 @@ export default function App() {
       `}</style>
       {view === "landing" && <Landing onPick={setView} />}
       {view === "verify" && <VerificationView rollNo={urlIntent.verify} settings={settings} onExit={() => { setView("landing"); }} />}
-      {view === "student" && <StudentPortal regs={regs} persist={persist} courses={courses} settings={settings} studentMaster={studentMaster} initialCourse={urlIntent.course} onExit={() => setView("landing")} />}
+      {view === "student" && <StudentPortal regs={regs} persist={persist} courses={courses} settings={settings} initialCourse={urlIntent.course} onExit={() => setView("landing")} />}
       {view === "admin" && <AdminPortal regs={regs} persist={persist} nextSeq={nextSeq} courses={courses} persistCourses={persistCourses} settings={settings} persistSettings={persistSettings} studentMaster={studentMaster} persistStudentMaster={persistStudentMaster} onRefresh={refreshAll} onExit={() => setView("landing")} />}
     </div>
   );
@@ -903,20 +909,27 @@ const emptyForm = {
   course: "", subjects: {}, receipt: null, utr: "", agree: false,
 };
 
-function StudentLoginGate({ settings, studentMaster, onVerified }) {
+function StudentLoginGate({ settings, onVerified }) {
   const [rollNo, setRollNo] = useState("");
   const [dob, setDob] = useState("");
   const [rollErr, setRollErr] = useState("");
+  const [checking, setChecking] = useState(false);
 
-  function verifyRollDob() {
+  async function verifyRollDob() {
     const target = sanitizeRollNo(rollNo, settings.rollNoAllowedSpecialChars);
-    const targetDob = normalizeDob(dob);
-    const match = studentMaster.find(
-      (s) => sanitizeRollNo(s.roll_no, settings.rollNoAllowedSpecialChars) === target && normalizeDob(s.dob) === targetDob
-    );
-    if (!match) { setRollErr("No matching record found. Check your Roll No. and date of birth, or contact the Examination Cell."); return; }
+    if (!target || !dob) { setRollErr("Enter both your Roll No. and date of birth."); return; }
+    setChecking(true);
     setRollErr("");
-    onVerified(match);
+    try {
+      const { data, error } = await supabase.rpc("verify_student", { p_roll_no: target, p_dob: dob });
+      if (error) throw error;
+      const match = Array.isArray(data) ? data[0] : data;
+      if (!match) { setRollErr("No matching record found. Check your Roll No. and date of birth, or contact the Examination Cell."); setChecking(false); return; }
+      onVerified(match);
+    } catch (e) {
+      setRollErr("Could not verify right now. Check your internet connection and try again.");
+    }
+    setChecking(false);
   }
 
   return (
@@ -935,13 +948,15 @@ function StudentLoginGate({ settings, studentMaster, onVerified }) {
           <input type="date" style={inputStyle} value={dob} onChange={(e) => setDob(e.target.value)} />
         </Field>
         {rollErr && <div style={{ color: "#a13a2f", fontSize: 12.5, marginBottom: 10 }}>{rollErr}</div>}
-        <Btn onClick={verifyRollDob} style={{ width: "100%", justifyContent: "center" }}>Verify & continue</Btn>
+        <Btn onClick={verifyRollDob} disabled={checking} style={{ width: "100%", justifyContent: "center" }}>
+          {checking ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : "Verify & continue"}
+        </Btn>
       </div>
     </div>
   );
 }
 
-function StudentPortal({ regs, persist, courses, settings, studentMaster, initialCourse, onExit }) {
+function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit }) {
   const [sub, setSub] = useState("form");
   const [verified, setVerified] = useState(null);
   const [draftId] = useState(() => uid());
@@ -1079,14 +1094,24 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
     setSub("confirmation");
   }
 
-  function doLookup() {
-    const htq = lookupHallTicket.trim().toLowerCase();
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupErr, setLookupErr] = useState("");
+
+  async function doLookup() {
+    const htq = sanitizeRollNo(lookupHallTicket, settings.rollNoAllowedSpecialChars);
     const mq = lookupMobile.trim();
-    const found = regs.filter((r) =>
-      (htq && r.hallTicketNo && r.hallTicketNo.toLowerCase() === htq) ||
-      (mq && r.mobile === mq)
-    );
-    setLookupResult(found);
+    if (!htq && !mq) { setLookupErr("Enter your Roll No. or registered mobile number."); return; }
+    setLookupBusy(true);
+    setLookupErr("");
+    try {
+      const { data, error } = await supabase.rpc("check_application_status", { p_roll_no: htq || null, p_mobile: mq || null });
+      if (error) throw error;
+      setLookupResult((data || []).map((r) => ({ id: r.id, hallTicketNo: r.hall_ticket_no, name: r.name, course: r.course_name, status: r.status, remarks: r.remarks })));
+    } catch (e) {
+      setLookupErr("Could not check status right now. Check your internet connection and try again.");
+      setLookupResult(undefined);
+    }
+    setLookupBusy(false);
   }
 
   return (
@@ -1117,10 +1142,9 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
             <p style={{ fontSize: 12.5, color: "#7a8794", marginTop: 10 }}>You can still check the status of an application you already submitted using the "Check status" tab above.</p>
           </div>
         )}
-        {sub === "form" && windowStatus.open && studentMaster.length > 0 && !verified && (
+        {sub === "form" && windowStatus.open && settings.studentListActive && !verified && (
           <StudentLoginGate
             settings={settings}
-            studentMaster={studentMaster}
             onVerified={(rec) => {
               setVerified(rec);
               setForm((f) => ({
@@ -1131,7 +1155,7 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
             }}
           />
         )}
-        {sub === "form" && windowStatus.open && (studentMaster.length === 0 || verified) && (
+        {sub === "form" && windowStatus.open && (!settings.studentListActive || verified) && (
           <div style={{ background: "#fff", border: "1px solid #dde3ea", borderRadius: 10, padding: 24 }}>
             <h3 style={{ margin: "0 0 4px", color: "#1c2b3a" }}>Examination registration form</h3>
             <p style={{ fontSize: 12.5, color: "#7a8794", margin: "0 0 18px" }}>Fields marked with * are required. Your hall ticket number will be assigned by the administrator after verification.</p>
@@ -1338,9 +1362,12 @@ function StudentPortal({ regs, persist, courses, settings, studentMaster, initia
             <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
               <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Roll No." value={lookupHallTicket} onChange={(e) => setLookupHallTicket(e.target.value)} />
               <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Or registered mobile number" value={lookupMobile} onChange={(e) => setLookupMobile(e.target.value.replace(/\D/g, ""))} maxLength={10} />
-              <Btn onClick={doLookup}><Search size={14} /> Search</Btn>
+              <Btn onClick={doLookup} disabled={lookupBusy}>
+                {lookupBusy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={14} />} Search
+              </Btn>
             </div>
             <p style={{ fontSize: 11.5, color: "#a2adb8", marginBottom: 12 }}>Enter either your hall ticket number or your registered mobile number.</p>
+            {lookupErr && <p style={{ fontSize: 13, color: "#a13a2f" }}>{lookupErr}</p>}
             {lookupResult !== undefined && lookupResult.length === 0 && (
               <p style={{ fontSize: 13, color: "#7a8794" }}>No applications found for this mobile number.</p>
             )}
@@ -1418,10 +1445,30 @@ function StatusPill({ status }) {
 
 function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings, persistSettings, studentMaster, persistStudentMaster, onRefresh, onExit }) {
   const [authed, setAuthed] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [pwErr, setPwErr] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
   const [tab, setTab] = useState("dashboard");
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setAuthed(!!data.session);
+      setAuthChecked(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthed(!!session);
+      if (session) onRefresh();
+    });
+    return () => {
+      active = false;
+      listener?.subscription?.unsubscribe();
+    };
+  }, []);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -1429,10 +1476,25 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
     setRefreshing(false);
   }
 
-  function login() {
-    const current = settings.adminPassword || "admin123";
-    if (pw === current) { setAuthed(true); setPwErr(""); }
-    else setPwErr("Incorrect password.");
+  async function login() {
+    setSigningIn(true);
+    setPwErr("");
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
+    setSigningIn(false);
+    if (error) setPwErr(error.message || "Sign-in failed. Check your email and password.");
+  }
+
+  async function logout() {
+    await supabase.auth.signOut();
+  }
+
+  if (!authChecked) {
+    return (
+      <div>
+        <Header title="Administrator portal" subtitle="AIIMS Bibinagar Examination Cell" onBack={onExit} />
+        <div style={{ padding: 40, textAlign: "center", color: "#7a8794" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /></div>
+      </div>
+    );
   }
 
   if (!authed) {
@@ -1440,15 +1502,22 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
       <div>
         <Header title="Administrator login" subtitle="AIIMS Bibinagar Examination Cell" onBack={onExit} />
         <div style={{ padding: 40, display: "flex", justifyContent: "center" }}>
-          <div style={{ background: "#fff", border: "1px solid #dde3ea", borderRadius: 10, padding: 26, width: 300 }}>
+          <div style={{ background: "#fff", border: "1px solid #dde3ea", borderRadius: 10, padding: 26, width: 320 }}>
             <ShieldCheck size={26} color="#a9762f" />
-            <p style={{ fontSize: 13, color: "#5f6d7a", margin: "10px 0 16px" }}>Enter the administrator password to continue.</p>
-            <input type="password" style={inputStyle} value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && login()} placeholder="Password" />
+            <p style={{ fontSize: 13, color: "#5f6d7a", margin: "10px 0 16px" }}>Sign in with your administrator account to continue.</p>
+            <Field label="Email">
+              <input type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && login()} placeholder="admin@example.com" />
+            </Field>
+            <Field label="Password">
+              <input type="password" style={inputStyle} value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && login()} placeholder="Password" />
+            </Field>
             {pwErr && <div style={{ color: "#a13a2f", fontSize: 12, marginTop: 6 }}>{pwErr}</div>}
-            <Btn onClick={login} style={{ marginTop: 14, width: "100%", justifyContent: "center" }}>Sign in</Btn>
-            {(settings.adminPassword || "admin123") === "admin123" && (
-              <p style={{ fontSize: 11, color: "#a2adb8", marginTop: 12 }}>Default password: admin123 — change this under Settings once you're in.</p>
-            )}
+            <Btn onClick={login} disabled={signingIn} style={{ marginTop: 14, width: "100%", justifyContent: "center" }}>
+              {signingIn ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : "Sign in"}
+            </Btn>
+            <p style={{ fontSize: 11, color: "#a2adb8", marginTop: 12 }}>
+              Admin accounts are created in Supabase (Authentication → Users) — there's no self-signup here.
+            </p>
           </div>
         </div>
       </div>
@@ -1471,7 +1540,7 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
           <button onClick={handleRefresh} title="Refresh data from storage" style={{ display: "flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6, color: "#cfe0f2", cursor: "pointer", padding: "5px 8px", fontSize: 12 }}>
             <Loader2 size={14} style={refreshing ? { animation: "spin 1s linear infinite" } : {}} /> Refresh
           </button>
-          <button onClick={onExit} title="Log out" style={{ background: "transparent", border: "none", color: "#cfe0f2", cursor: "pointer", padding: 4 }}><LogOut size={17} /></button>
+          <button onClick={async () => { await logout(); onExit(); }} title="Log out" style={{ background: "transparent", border: "none", color: "#cfe0f2", cursor: "pointer", padding: 4 }}><LogOut size={17} /></button>
         </div>} />
       <div style={{ padding: 22 }}>
         {tab === "dashboard" && <Dashboard regs={regs} settings={settings} />}
@@ -1541,7 +1610,7 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
           .map((r) => {
             const rec = {};
             Object.keys(r).forEach((k) => { rec[k.trim().toLowerCase().replace(/\s+/g, "_")] = (r[k] || "").toString().trim(); });
-            return { roll_no: sanitizeRollNo(rec.roll_no || rec.rollno || rec.roll || "", settings.rollNoAllowedSpecialChars), mobile: rec.mobile || rec.mobile_no || rec.phone || "", dob: rec.dob || rec.date_of_birth || "", name: rec.name || "" };
+            return { roll_no: sanitizeRollNo(rec.roll_no || rec.rollno || rec.roll || "", settings.rollNoAllowedSpecialChars), mobile: rec.mobile || rec.mobile_no || rec.phone || "", dob: normalizeDob(rec.dob || rec.date_of_birth || ""), name: rec.name || "" };
           })
           .filter((r) => r.roll_no || r.mobile);
         if (cleaned.length === 0) {
@@ -2295,10 +2364,6 @@ function SettingsAdmin({ settings, persistSettings }) {
   const [saveErr, setSaveErr] = useState("");
 
   function save() {
-    if (!draft.adminPassword || !draft.adminPassword.trim()) {
-      setSaveErr("Admin password cannot be empty.");
-      return;
-    }
     setSaveErr("");
     persistSettings(draft);
     setSaved(true);
@@ -2316,9 +2381,11 @@ function SettingsAdmin({ settings, persistSettings }) {
       </Field>
 
       <h4 style={{ fontSize: 12.5, color: "#274566", margin: "16px 0 8px" }}>Admin login</h4>
-      <Field label="Admin password" hint="Change this from the default before sharing the site's link with anyone. Keep it somewhere safe — if you forget it, you'll need direct access to the database to reset it.">
-        <input type="password" style={inputStyle} value={draft.adminPassword} onChange={(e) => set("adminPassword", e.target.value)} />
-      </Field>
+      <p style={{ fontSize: 12, color: "#7a8794", marginBottom: 14 }}>
+        Admin accounts are now managed in Supabase directly (Authentication → Users), not here — this is more
+        secure since account details are never exposed to the app itself. Add, remove, or reset admin accounts from
+        your Supabase dashboard.
+      </p>
 
       <h4 style={{ fontSize: 12.5, color: "#274566", margin: "16px 0 8px" }}>Student registration access</h4>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#f7f9fb", border: "1px solid #e2e8ef", borderRadius: 8, padding: "10px 14px", marginBottom: 6 }}>
