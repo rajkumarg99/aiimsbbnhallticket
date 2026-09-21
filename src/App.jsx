@@ -2919,6 +2919,7 @@ function Reports({ regs, courses }) {
     { label: "Application ID", get: (r) => r.id },
     { label: "Roll No.", get: (r) => r.hallTicketNo || "" },
     { label: "Name", get: (r) => r.name },
+    { label: "Date of birth", get: (r) => r.dob || "" },
     { label: "Gender", get: (r) => r.gender || "" },
     { label: "Father/Guardian", get: (r) => r.father },
     { label: "Mobile", get: (r) => r.mobile },
