@@ -1583,8 +1583,8 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
 
   function downloadNotApplied() {
     const csv = toCSV(notApplied, [
-      { label: "roll_no", get: (r) => r.roll_no },
-      { label: "mobile", get: (r) => r.mobile },
+      { label: "roll_no", get: (r) => forceText(r.roll_no) },
+      { label: "mobile", get: (r) => forceText(r.mobile) },
       { label: "dob", get: (r) => r.dob },
       { label: "name", get: (r) => r.name },
     ]);
@@ -1631,8 +1631,8 @@ function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, per
 
   function downloadCurrent() {
     const csv = toCSV(studentMaster, [
-      { label: "roll_no", get: (r) => r.roll_no },
-      { label: "mobile", get: (r) => r.mobile },
+      { label: "roll_no", get: (r) => forceText(r.roll_no) },
+      { label: "mobile", get: (r) => forceText(r.mobile) },
       { label: "dob", get: (r) => r.dob },
       { label: "name", get: (r) => r.name },
     ]);
@@ -2783,6 +2783,15 @@ function toCSV(rows, columns) {
   return header + "\n" + body;
 }
 
+// Excel auto-detects long number-looking CSV values as numbers and displays
+// (and, if the file is re-saved, permanently stores) them in scientific
+// notation — silently losing digits beyond about 6 significant figures.
+// A leading apostrophe forces Excel to keep the value as text instead; the
+// apostrophe itself is hidden in the displayed cell, so nothing looks odd.
+function forceText(value) {
+  return value ? "'" + value : "";
+}
+
 function download(filename, content, mime) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -2917,16 +2926,16 @@ function Reports({ regs, courses }) {
   const scopedRegs = courseFilter ? regs.filter((r) => r.course === courseFilter) : regs;
   const baseCols = [
     { label: "Application ID", get: (r) => r.id },
-    { label: "Roll No.", get: (r) => r.hallTicketNo || "" },
+    { label: "Roll No.", get: (r) => forceText(r.hallTicketNo) },
     { label: "Name", get: (r) => r.name },
     { label: "Date of birth", get: (r) => r.dob || "" },
     { label: "Gender", get: (r) => r.gender || "" },
     { label: "Father/Guardian", get: (r) => r.father },
-    { label: "Mobile", get: (r) => r.mobile },
+    { label: "Mobile", get: (r) => forceText(r.mobile) },
     { label: "Course", get: (r) => r.course },
     { label: "Subjects", get: (r) => (r.subjects || []).map((raw) => { const s = liveSubject(courses, r.course, raw); return s.date ? `${s.name} (${formatExamDateRange(s)})` : s.name; }).join("; ") },
     { label: "Total fee", get: (r) => r.totalFee },
-    { label: "UTR", get: (r) => r.utr },
+    { label: "UTR", get: (r) => forceText(r.utr) },
     { label: "Status", get: (r) => r.status },
     { label: "Submitted at", get: (r) => r.submittedAt },
   ];
