@@ -972,7 +972,7 @@ function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit
   const [lookupHallTicket, setLookupHallTicket] = useState("");
   const [lookupResult, setLookupResult] = useState(undefined);
 
-  const availableCourses = Object.keys(courses).filter((c) => courses[c].active !== false);
+  const availableCourses = sortedCourseNames(courses).filter((c) => courses[c].active !== false);
   const courseSubjects = form.course ? courses[form.course].subjects : [];
   const feeTier = form.course ? courses[form.course].feeTier : null;
   const fee = useMemo(() => {
@@ -1960,7 +1960,7 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
         </div>
       )}
 
-      {Object.keys(courses).map((name) => {
+      {sortedCourseNames(courses).map((name) => {
         const c = courses[name];
         const active = c.active !== false;
         return (
@@ -2157,7 +2157,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
         <input style={{ ...inputStyle, maxWidth: 220 }} placeholder="Search name, mobile, roll no." value={q} onChange={(e) => setQ(e.target.value)} />
         <select style={{ ...inputStyle, maxWidth: 200 }} value={courseFilter} onChange={(e) => setCourseFilter(e.target.value)}>
           <option value="">All courses</option>
-          {Object.keys(courses).map((c) => <option key={c} value={c}>{c}</option>)}
+          {sortedCourseNames(courses).map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
         <select style={{ ...inputStyle, maxWidth: 160 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">All statuses</option>
@@ -2210,7 +2210,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                       <Field label="Communication address"><textarea style={{ ...inputStyle, minHeight: 50 }} value={editDraft.commAddress} onChange={(e) => setEditDraft((d) => ({ ...d, commAddress: e.target.value }))} /></Field>
                       <Field label="Course">
                         <select style={inputStyle} value={editDraft.course} onChange={(e) => setEditDraft((d) => ({ ...d, course: e.target.value, subjects: [] }))}>
-                          {Object.keys(courses).map((c) => <option key={c} value={c}>{c}</option>)}
+                          {sortedCourseNames(courses).map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </Field>
                     </div>
@@ -2636,7 +2636,7 @@ function HallTickets({ regs, courses, settings }) {
         <div style={{ fontWeight: 700, fontSize: 13.5, color: "#1c2b3a", marginBottom: 10 }}>Bulk hall ticket generation</div>
         <select style={{ ...inputStyle, maxWidth: 340, marginBottom: 14 }} value={bulkCourse} onChange={(e) => setBulkCourse(e.target.value)}>
           <option value="">Select course</option>
-          {Object.keys(courses).map((c) => <option key={c} value={c}>{c}</option>)}
+          {sortedCourseNames(courses).map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
         {bulkCourse && (
           bulkList.length === 0 ? (
@@ -2666,6 +2666,10 @@ function HallTickets({ regs, courses, settings }) {
 function lastFiveDigits(hallTicketNo) {
   const digitsOnly = (hallTicketNo || "").replace(/\D/g, "");
   return digitsOnly.slice(-5);
+}
+
+function sortedCourseNames(courses) {
+  return Object.keys(courses || {}).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
 }
 
 function sortSubjectsByDate(list) {
@@ -2739,7 +2743,7 @@ function ReceiptsSheet({ regs, courses }) {
       <div style={{ margin: "12px 0" }}>
         <select style={{ ...inputStyle, maxWidth: 320 }} value={courseFilter} onChange={(e) => setCourseFilter(e.target.value)}>
           <option value="">All courses</option>
-          {Object.keys(courses).map((c) => <option key={c} value={c}>{c}</option>)}
+          {sortedCourseNames(courses).map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
 
@@ -2954,7 +2958,7 @@ function Reports({ regs, courses }) {
       <p style={{ fontSize: 12.5, color: "#7a8794", marginBottom: 12 }}>Export application data as CSV (opens in Excel) for record-keeping and reconciliation.</p>
       <select style={{ ...inputStyle, maxWidth: 320, marginBottom: 14 }} value={courseFilter} onChange={(e) => setCourseFilter(e.target.value)}>
         <option value="">All courses</option>
-        {Object.keys(courses).map((c) => <option key={c} value={c}>{c}</option>)}
+        {sortedCourseNames(courses).map((c) => <option key={c} value={c}>{c}</option>)}
       </select>
       {reportsList.map((rep) => (
         <div key={rep.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #eef1f5" }}>
