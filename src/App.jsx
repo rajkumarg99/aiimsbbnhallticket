@@ -650,60 +650,60 @@ export default function App() {
     const previous = regsRef.current;
     setRegs(next);
     regsRef.current = next;
-    try {
-      const prevById = new Map(previous.map((r) => [r.id, r]));
-      const nextIds = new Set(next.map((r) => r.id));
-      const removed = previous.filter((r) => !nextIds.has(r.id));
-      for (const r of removed) {
-        await supabase.from("applications").delete().eq("id", r.id);
+    const prevById = new Map(previous.map((r) => [r.id, r]));
+    const nextIds = new Set(next.map((r) => r.id));
+    const removed = previous.filter((r) => !nextIds.has(r.id));
+    for (const r of removed) {
+      const { error } = await supabase.from("applications").delete().eq("id", r.id);
+      if (error) throw error;
+    }
+    for (const r of next) {
+      const prev = prevById.get(r.id);
+      if (prev === r) continue; // unchanged reference, skip
+      const courseId = coursesRef.current[r.course]?.id || null;
+      const { error: upsertErr } = await supabase.from("applications").upsert({
+        id: r.id,
+        hall_ticket_no: r.hallTicketNo || null,
+        status: r.status,
+        name: r.name,
+        father: r.father,
+        dob: r.dob || null,
+        gender: r.gender || null,
+        mobile: r.mobile,
+        guardian_mobile: r.guardianMobile,
+        perm_address: r.permAddress,
+        comm_address: r.commAddress,
+        photo_data_url: r.photo?.dataUrl || null,
+        signature_data_url: r.signature?.dataUrl || null,
+        signature_mode: r.signatureMode || "upload",
+        course_id: courseId,
+        course_name: r.course,
+        total_fee: r.totalFee || 0,
+        utr: r.utr || null,
+        receipt_data_url: r.receipt?.dataUrl || null,
+        receipt_name: r.receipt?.name || null,
+        receipt_type: r.receipt?.type || null,
+        receipt_size: r.receipt?.size || null,
+        remarks: r.remarks || "",
+        history: r.history || [],
+        submitted_at: r.submittedAt || new Date().toISOString(),
+      });
+      if (upsertErr) throw upsertErr;
+      const { error: delErr } = await supabase.from("application_subjects").delete().eq("application_id", r.id);
+      if (delErr) throw delErr;
+      if (r.subjects && r.subjects.length > 0) {
+        const { error: subjErr } = await supabase.from("application_subjects").insert(
+          r.subjects.map((s) => ({
+            application_id: r.id,
+            subject_id: s.id || null,
+            subject_name: s.name,
+            exam_date: s.date || null,
+            exam_date_to: s.dateTo || null,
+            exam_time: s.time || null,
+          }))
+        );
+        if (subjErr) throw subjErr;
       }
-      for (const r of next) {
-        const prev = prevById.get(r.id);
-        if (prev === r) continue; // unchanged reference, skip
-        const courseId = coursesRef.current[r.course]?.id || null;
-        await supabase.from("applications").upsert({
-          id: r.id,
-          hall_ticket_no: r.hallTicketNo || null,
-          status: r.status,
-          name: r.name,
-          father: r.father,
-          dob: r.dob || null,
-          gender: r.gender || null,
-          mobile: r.mobile,
-          guardian_mobile: r.guardianMobile,
-          perm_address: r.permAddress,
-          comm_address: r.commAddress,
-          photo_data_url: r.photo?.dataUrl || null,
-          signature_data_url: r.signature?.dataUrl || null,
-          signature_mode: r.signatureMode || "upload",
-          course_id: courseId,
-          course_name: r.course,
-          total_fee: r.totalFee || 0,
-          utr: r.utr || null,
-          receipt_data_url: r.receipt?.dataUrl || null,
-          receipt_name: r.receipt?.name || null,
-          receipt_type: r.receipt?.type || null,
-          receipt_size: r.receipt?.size || null,
-          remarks: r.remarks || "",
-          history: r.history || [],
-          submitted_at: r.submittedAt || new Date().toISOString(),
-        });
-        await supabase.from("application_subjects").delete().eq("application_id", r.id);
-        if (r.subjects && r.subjects.length > 0) {
-          await supabase.from("application_subjects").insert(
-            r.subjects.map((s) => ({
-              application_id: r.id,
-              subject_id: s.id || null,
-              subject_name: s.name,
-              exam_date: s.date || null,
-              exam_date_to: s.dateTo || null,
-              exam_time: s.time || null,
-            }))
-          );
-        }
-      }
-    } catch (e) {
-      console.error("Supabase persist(applications) error:", e.message);
     }
   }
 
@@ -1088,10 +1088,15 @@ function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit
       totalFee: fee.total, utr: form.utr, receipt: form.receipt,
       remarks: "", history: [{ at: new Date().toISOString(), action: "Application submitted" }],
     };
-    await persist([...regs, record]);
-    setMyApp(record);
-    setBusy(false);
-    setSub("confirmation");
+    try {
+      await persist([...regs, record]);
+      setMyApp(record);
+      setBusy(false);
+      setSub("confirmation");
+    } catch (e) {
+      setBusy(false);
+      setError("Your application could not be saved — please check your internet connection and press Submit again. Nothing has been recorded yet, so it's safe to retry.");
+    }
   }
 
   const [lookupBusy, setLookupBusy] = useState(false);
@@ -1826,9 +1831,13 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
     );
     if (!confirmed) return;
     const remaining = regs.filter((r) => r.course !== name);
-    await persist(remaining);
-    await deleteStorageFilesForApplications(matching);
-    window.alert(`Deleted ${matching.length} application(s) for "${name}".`);
+    try {
+      await persist(remaining);
+      await deleteStorageFilesForApplications(matching);
+      window.alert(`Deleted ${matching.length} application(s) for "${name}".`);
+    } catch (e) {
+      window.alert("Could not delete these applications — check your internet connection and try again.");
+    }
   }
 
   function startAdd() {
@@ -1878,7 +1887,11 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
       const affected = regs.filter((r) => r.course === oldName);
       if (affected.length > 0) {
         const updatedRegs = regs.map((r) => r.course === oldName ? { ...r, course: newName } : r);
-        await persist(updatedRegs);
+        try {
+          await persist(updatedRegs);
+        } catch (e) {
+          window.alert("The course was renamed, but updating its existing applications failed — check your internet connection and try renaming again.");
+        }
       }
     }
     setDraft(null);
@@ -2114,17 +2127,25 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
       course: editDraft.course, subjects, totalFee,
       history: [...r.history, { at: new Date().toISOString(), action: "Details edited by administrator" }],
     } : r);
-    await persist(updated);
-    setEditId(null);
-    setEditDraft(null);
+    try {
+      await persist(updated);
+      setEditId(null);
+      setEditDraft(null);
+    } catch (e) {
+      window.alert("Could not save these changes — check your internet connection and try again.");
+    }
   }
 
   async function deleteApplication(reg) {
     if (!window.confirm(`Permanently delete the application for "${reg.name}" (${reg.id})? This cannot be undone.`)) return;
     const updated = regs.filter((r) => r.id !== reg.id);
-    await persist(updated);
-    await deleteStorageFilesForApplications([reg]);
-    setOpenId(null);
+    try {
+      await persist(updated);
+      await deleteStorageFilesForApplications([reg]);
+      setOpenId(null);
+    } catch (e) {
+      window.alert("Could not delete this application — check your internet connection and try again.");
+    }
   }
 
   const filtered = sortByRoll(regs.filter((r) => {
@@ -2148,7 +2169,11 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
       ...r, status, hallTicketNo, remarks,
       history: [...r.history, { at: new Date().toISOString(), action: `Status set to ${status}${remarks ? " — " + remarks : ""}` }],
     } : r);
-    await persist(updated);
+    try {
+      await persist(updated);
+    } catch (e) {
+      window.alert("Could not save this status change — check your internet connection and try again.");
+    }
   }
 
   return (
