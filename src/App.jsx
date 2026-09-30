@@ -1094,8 +1094,9 @@ function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit
       setBusy(false);
       setSub("confirmation");
     } catch (e) {
+      console.error("Application submit failed:", e);
       setBusy(false);
-      setError("Your application could not be saved — please check your internet connection and press Submit again. Nothing has been recorded yet, so it's safe to retry.");
+      setError(`Your application could not be saved: ${e?.message || "unknown error"}. Nothing has been recorded yet, so it's safe to press Submit again.`);
     }
   }
 
@@ -1836,7 +1837,8 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
       await deleteStorageFilesForApplications(matching);
       window.alert(`Deleted ${matching.length} application(s) for "${name}".`);
     } catch (e) {
-      window.alert("Could not delete these applications — check your internet connection and try again.");
+      console.error("Bulk delete failed:", e);
+      window.alert("Could not delete these applications: " + (e?.message || "unknown error"));
     }
   }
 
@@ -1890,7 +1892,8 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
         try {
           await persist(updatedRegs);
         } catch (e) {
-          window.alert("The course was renamed, but updating its existing applications failed — check your internet connection and try renaming again.");
+          console.error("Course rename cascade failed:", e);
+          window.alert("The course was renamed, but updating its existing applications failed: " + (e?.message || "unknown error"));
         }
       }
     }
@@ -2132,7 +2135,8 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
       setEditId(null);
       setEditDraft(null);
     } catch (e) {
-      window.alert("Could not save these changes — check your internet connection and try again.");
+      console.error("Save edit failed:", e);
+      window.alert("Could not save these changes: " + (e?.message || "unknown error"));
     }
   }
 
@@ -2144,7 +2148,8 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
       await deleteStorageFilesForApplications([reg]);
       setOpenId(null);
     } catch (e) {
-      window.alert("Could not delete this application — check your internet connection and try again.");
+      console.error("Delete application failed:", e);
+      window.alert("Could not delete this application: " + (e?.message || "unknown error"));
     }
   }
 
@@ -2172,7 +2177,8 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
     try {
       await persist(updated);
     } catch (e) {
-      window.alert("Could not save this status change — check your internet connection and try again.");
+      console.error("Status change failed:", e);
+      window.alert("Could not save this status change: " + (e?.message || "unknown error"));
     }
   }
 
