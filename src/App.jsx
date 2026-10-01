@@ -661,7 +661,7 @@ export default function App() {
       const prev = prevById.get(r.id);
       if (prev === r) continue; // unchanged reference, skip
       const courseId = coursesRef.current[r.course]?.id || null;
-      const { error: upsertErr } = await supabase.from("applications").upsert({
+      const row = {
         id: r.id,
         hall_ticket_no: r.hallTicketNo || null,
         status: r.status,
@@ -687,10 +687,22 @@ export default function App() {
         remarks: r.remarks || "",
         history: r.history || [],
         submitted_at: r.submittedAt || new Date().toISOString(),
-      });
+      };
+      // A brand-new application (no matching previous row) only needs the
+      // public INSERT policy — a plain insert() satisfies just that. An
+      // existing application being changed by an admin needs update()
+      // instead, so it's checked against the admin-only UPDATE policy.
+      // upsert() would require BOTH policies to pass on every save (since
+      // it compiles to INSERT ... ON CONFLICT DO UPDATE), which is exactly
+      // what was silently blocking every student submission.
+      const { error: upsertErr } = prev
+        ? await supabase.from("applications").update(row).eq("id", r.id)
+        : await supabase.from("applications").insert(row);
       if (upsertErr) throw upsertErr;
-      const { error: delErr } = await supabase.from("application_subjects").delete().eq("application_id", r.id);
-      if (delErr) throw delErr;
+      if (prev) {
+        const { error: delErr } = await supabase.from("application_subjects").delete().eq("application_id", r.id);
+        if (delErr) throw delErr;
+      }
       if (r.subjects && r.subjects.length > 0) {
         const { error: subjErr } = await supabase.from("application_subjects").insert(
           r.subjects.map((s) => ({
