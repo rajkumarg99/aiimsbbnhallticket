@@ -50,9 +50,33 @@ function seedCourses() {
 // - "flat" (default, no feeTier set): sum of each selected subject's individual fee (MBBS, M.Sc Nursing).
 // - "tier1" (I Year B.Sc Nursing / B.Sc Allied Health): 1 subject = ₹20, 2+ subjects = ₹40.
 // - "tier2" (II & III Year B.Sc Nursing / B.Sc Allied Health): 1 subject = ₹20, 2 subjects = ₹30, 3+ subjects = ₹60.
-function computeFee(courses, courseName, subjectNames) {
+// ---- Department-based courses (e.g. PG MD/MS) ----------------------------
+// A department course has a shared set of theory papers (same dates for every
+// department) plus one row per department carrying that department's own
+// practical dates. Choosing a department selects all theory papers and that
+// department's practical automatically, for one flat, editable fee.
+// Stored in the ordinary subjects list, tagged with role "theory" / "department".
+function isDeptCourse(c) { return c?.kind === "department"; }
+function byNameNatural(a, b) { return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true, sensitivity: "base" }); }
+function theoryPapersOf(c) { return (c?.subjects || []).filter((s) => s.role === "theory").sort(byNameNatural); }
+function departmentsOf(c) { return (c?.subjects || []).filter((s) => s.role === "department").sort(byNameNatural); }
+function practicalLabel(dept) { return `Practical (${dept})`; }
+function departmentSubjects(c, deptName) {
+  const dept = departmentsOf(c).find((d) => d.name === deptName);
+  if (!dept) return [];
+  return [
+    ...theoryPapersOf(c).map((s) => ({ id: s.id, name: s.name, date: s.date || "", dateTo: s.dateTo || "", time: s.time || "" })),
+    { id: dept.id, name: practicalLabel(dept.name), date: dept.date || "", dateTo: dept.dateTo || "", time: dept.time || "" },
+  ];
+}
+
+function computeFee(courses, courseName, subjectNames, department) {
   const courseData = courses[courseName];
   if (!courseData) return { count: 0, total: 0, subjects: [] };
+  if (isDeptCourse(courseData)) {
+    const subs = department ? departmentSubjects(courseData, department) : [];
+    return { count: subs.length, total: subs.length ? (Number(courseData.flatFee) || 0) : 0, subjects: subs };
+  }
   const chosen = courseData.subjects.filter((s) => subjectNames.includes(s.name));
   const count = chosen.length;
   let total;
@@ -76,6 +100,7 @@ function computeFee(courses, courseName, subjectNames) {
 function liveSubject(courses, courseName, rec) {
   const list = courses?.[courseName]?.subjects || [];
   const found = (rec.id && list.find((s) => s.id === rec.id)) || list.find((s) => s.name === rec.name);
+  if (found && found.role === "department") return { ...found, name: practicalLabel(found.name) };
   return found || rec;
 }
 
@@ -185,6 +210,7 @@ function defaultSettings() {
     instituteName: "All India Institute of Medical Sciences, Bibinagar",
     publicBaseUrl: "",
     examCentre: "AIIMS Bibinagar — Examination Hall, Block A",
+    practicalExamNote: "Practical Examination will be conducted in their respective departments.",
     signatoryTitle: "Dean (Examination), AIIMS Bibinagar",
     signatoryImageUrl: null,
     signatureMissingMessage: "Signature Not Uploaded",
@@ -423,10 +449,12 @@ function rowsToCourses(courseRows, subjectRows) {
       code: c.code,
       feeTier: c.fee_tier || undefined,
       examTitle: c.exam_title || "",
+      kind: c.kind || "",
+      flatFee: c.flat_fee !== null && c.flat_fee !== undefined ? Number(c.flat_fee) : undefined,
       active: c.active !== false,
       subjects: (subjectRows || [])
         .filter((s) => s.course_id === c.id)
-        .map((s) => ({ id: s.id, name: s.name, fee: Number(s.fee) || 0, date: s.exam_date || "", dateTo: s.exam_date_to || "", time: s.exam_time || "", linkGroup: s.link_group || "" })),
+        .map((s) => ({ id: s.id, name: s.name, fee: Number(s.fee) || 0, date: s.exam_date || "", dateTo: s.exam_date_to || "", time: s.exam_time || "", linkGroup: s.link_group || "", role: s.role || "" })),
     };
   });
   return courses;
@@ -441,6 +469,7 @@ function rowsToRegs(appRows, appSubjectRows) {
     father: a.father,
     dob: a.dob,
     gender: a.gender || "",
+    department: a.department || "",
     mobile: a.mobile,
     guardianMobile: a.guardian_mobile,
     permAddress: a.perm_address,
@@ -468,6 +497,7 @@ function settingsRowToObject(row) {
     instituteName: row.institute_name || defaults.instituteName,
     publicBaseUrl: row.public_base_url || "",
     examCentre: row.exam_centre || defaults.examCentre,
+    practicalExamNote: row.practical_exam_note !== null && row.practical_exam_note !== undefined ? row.practical_exam_note : defaults.practicalExamNote,
     signatoryTitle: row.signatory_title || defaults.signatoryTitle,
     signatoryImageUrl: row.signatory_image_url || null,
     signatureMissingMessage: row.signature_missing_message || defaults.signatureMissingMessage,
@@ -496,6 +526,7 @@ function settingsObjectToRow(s) {
     institute_name: s.instituteName,
     public_base_url: s.publicBaseUrl,
     exam_centre: s.examCentre,
+    practical_exam_note: s.practicalExamNote,
     signatory_title: s.signatoryTitle,
     signatory_image_url: s.signatoryImageUrl,
     signature_missing_message: s.signatureMissingMessage,
@@ -669,6 +700,7 @@ export default function App() {
         father: r.father,
         dob: r.dob || null,
         gender: r.gender || null,
+        department: r.department || null,
         mobile: r.mobile,
         guardian_mobile: r.guardianMobile,
         perm_address: r.permAddress,
@@ -729,26 +761,32 @@ export default function App() {
       const nextIds = new Set(Object.values(next).map((c) => c.id));
       const removedCourses = Object.values(previous).filter((c) => !nextIds.has(c.id));
       for (const c of removedCourses) {
-        await supabase.from("courses").delete().eq("id", c.id);
+        const { error } = await supabase.from("courses").delete().eq("id", c.id);
+        if (error) throw error;
       }
       for (const [name, c] of Object.entries(next)) {
-        await supabase.from("courses").upsert({
+        const { error: courseErr } = await supabase.from("courses").upsert({
           id: c.id,
           name,
           code: c.code,
           fee_tier: c.feeTier || null,
           exam_title: c.examTitle || null,
+          kind: c.kind || null,
+          flat_fee: c.kind === "department" && c.flatFee !== undefined && c.flatFee !== "" ? Number(c.flatFee) : null,
           active: c.active !== false,
         });
-        const { data: existingSubjectRows } = await supabase.from("subjects").select("id").eq("course_id", c.id);
+        if (courseErr) throw courseErr;
+        const { data: existingSubjectRows, error: selErr } = await supabase.from("subjects").select("id").eq("course_id", c.id);
+        if (selErr) throw selErr;
         const existingIds = new Set((existingSubjectRows || []).map((s) => s.id));
         const nextSubjectIds = new Set(c.subjects.map((s) => s.id));
         const toRemove = [...existingIds].filter((id) => !nextSubjectIds.has(id));
         for (const id of toRemove) {
-          await supabase.from("subjects").delete().eq("id", id);
+          const { error } = await supabase.from("subjects").delete().eq("id", id);
+          if (error) throw error;
         }
         for (const s of c.subjects) {
-          await supabase.from("subjects").upsert({
+          const { error: subjErr } = await supabase.from("subjects").upsert({
             id: s.id,
             course_id: c.id,
             name: s.name,
@@ -757,11 +795,14 @@ export default function App() {
             exam_date_to: s.dateTo || null,
             exam_time: s.time || null,
             link_group: s.linkGroup || null,
+            role: s.role || null,
           });
+          if (subjErr) throw subjErr;
         }
       }
     } catch (e) {
-      console.error("Supabase persist(courses) error:", e.message);
+      console.error("Supabase persist(courses) error:", e);
+      window.alert("Could not save the course changes: " + (e?.message || "unknown error") + "\n\nIf this mentions a missing column, run the latest SQL update in Supabase (SQL Editor) and try again.");
     }
   }
 
@@ -918,7 +959,7 @@ const emptyForm = {
   permAddress: "", commAddress: "", sameAsPerm: false,
   hallTicketNo: "",
   photo: null, signature: null, signatureMode: "upload",
-  course: "", subjects: {}, receipt: null, utr: "", agree: false,
+  course: "", department: "", subjects: {}, receipt: null, utr: "", agree: false,
 };
 
 function StudentLoginGate({ settings, onVerified }) {
@@ -990,8 +1031,8 @@ function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit
   const fee = useMemo(() => {
     if (!form.course) return { count: 0, total: 0, subjects: [] };
     const selected = Object.keys(form.subjects).filter((n) => form.subjects[n]);
-    return computeFee(courses, form.course, selected);
-  }, [form.course, form.subjects, courses]);
+    return computeFee(courses, form.course, selected, form.department);
+  }, [form.course, form.subjects, form.department, courses]);
   const upiUri = useMemo(
     () => buildUpiUri(settings.bank, settings.instituteName, fee.total, `Exam fee ${form.hallTicketNo || ""}`.trim()),
     [settings.bank, settings.instituteName, fee.total, form.hallTicketNo]
@@ -1073,7 +1114,7 @@ function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit
     if (!form.sameAsPerm && !form.commAddress) return "Communication address is required.";
     if (!form.photo) return "Please upload your photograph.";
     if (!form.signature) return "Signature to be uploaded.";
-    if (fee.count === 0) return "Select at least one subject to appear for.";
+    if (fee.count === 0) return isDeptCourse(courses[form.course]) ? "Select your department." : "Select at least one subject to appear for.";
     if (!form.utr) return "Enter the UPI transaction reference (UTR) number after payment.";
     if (!form.receipt) return "Please upload your payment receipt.";
     if (!form.agree) return "You must accept the declaration to submit the form.";
@@ -1096,7 +1137,7 @@ function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit
       permAddress: form.permAddress,
       commAddress: form.sameAsPerm ? form.permAddress : form.commAddress,
       photo: form.photo, signature: form.signature, signatureMode: form.signatureMode,
-      course: form.course, subjects: fee.subjects,
+      course: form.course, department: isDeptCourse(courses[form.course]) ? form.department : "", subjects: fee.subjects,
       totalFee: fee.total, utr: form.utr, receipt: form.receipt,
       remarks: "", history: [{ at: new Date().toISOString(), action: "Application submitted" }],
     };
@@ -1243,7 +1284,7 @@ function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit
 
             <SectionTitle n="4" title="Course & subject selection" />
             <Field label="Course" required>
-              <select style={inputStyle} value={form.course} onChange={(e) => { update("course", e.target.value); update("subjects", {}); }}>
+              <select style={inputStyle} value={form.course} onChange={(e) => { update("course", e.target.value); update("subjects", {}); update("department", ""); }}>
                 <option value="">Select course</option>
                 {availableCourses.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -1251,7 +1292,38 @@ function StudentPortal({ regs, persist, courses, settings, initialCourse, onExit
                 <div style={{ fontSize: 11.5, color: "#a2adb8", marginTop: 4 }}>Only courses currently open for registration are shown.</div>
               )}
             </Field>
-            {form.course && (
+            {form.course && isDeptCourse(courses[form.course]) && (() => {
+              const dc = courses[form.course];
+              const schedule = form.department ? sortSubjectsByDate(departmentSubjects(dc, form.department)) : [];
+              return (
+                <div style={{ background: "#f7f9fb", border: "1px solid #e2e8ef", borderRadius: 8, padding: 14, marginTop: 6 }}>
+                  <Field label="Department" required hint="Choosing your department selects all the theory papers and your department's practical examination automatically.">
+                    <select style={inputStyle} value={form.department} onChange={(e) => update("department", e.target.value)}>
+                      <option value="">Select department</option>
+                      {departmentsOf(dc).map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
+                    </select>
+                  </Field>
+                  {form.department && (
+                    <>
+                      <p style={{ fontSize: 12.5, margin: "4px 0 6px", color: "#5f6d7a", fontStyle: "italic" }}>
+                        I have sufficient attendance and I will appear in the following examinations.
+                      </p>
+                      {schedule.map((s) => (
+                        <div key={s.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0", borderBottom: "1px solid #ecf0f4", fontSize: 13.5 }}>
+                          <span>{s.name}</span>
+                          <span style={{ fontSize: 11.5, color: "#8a6116", textAlign: "right" }}>{formatExamDateRange(s)}</span>
+                        </div>
+                      ))}
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10, fontSize: 13.5 }}>
+                        <span style={{ color: "#5f6d7a" }}>All {schedule.length} examinations selected</span>
+                        <span style={{ fontWeight: 700, color: "#1a3a5c" }}>Total fee: ₹{fee.total}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+            {form.course && !isDeptCourse(courses[form.course]) && (
               <div style={{ background: "#f7f9fb", border: "1px solid #e2e8ef", borderRadius: 8, padding: 14, marginTop: 6 }}>
                 <p style={{ fontSize: 12.5, margin: "0 0 6px", color: "#5f6d7a", fontStyle: "italic" }}>
                   I have sufficient attendance and I will appear in the following subjects.
@@ -1575,8 +1647,14 @@ function AdminPortal({ regs, persist, nextSeq, courses, persistCourses, settings
   );
 }
 
+const PG_DEFAULT_DEPARTMENTS = [
+  "Anaesthesiology", "Biochemistry", "CFM", "ENT", "General Medicine", "General Surgery", "OBGY",
+  "Ophthalmology", "Orthopaedics", "Paediatrics", "Pathology", "Pharmacology", "Physiology",
+  "Psychiatry", "Radio Diagnosis",
+];
+
 function emptyCourseDraft() {
-  return { id: null, originalName: null, name: "", code: "", feeTier: "", examTitle: "", subjects: [{ id: subjId(), name: "", fee: 100, date: "", dateTo: "", time: "", linkGroup: "" }] };
+  return { id: null, originalName: null, name: "", code: "", feeTier: "", examTitle: "", kind: "", flatFee: 200, theory: [], depts: [], subjects: [{ id: subjId(), name: "", fee: 100, date: "", dateTo: "", time: "", linkGroup: "" }] };
 }
 
 function StudentMasterAdmin({ studentMaster, persistStudentMaster, settings, persistSettings, regs }) {
@@ -1862,8 +1940,34 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
   function startEdit(name) {
     setErr("");
     const c = courses[name];
-    setDraft({ id: c.id || genId("course"), originalName: name, name, code: c.code, feeTier: c.feeTier || "", examTitle: c.examTitle || "", subjects: c.subjects.map((s) => ({ id: s.id || subjId(), name: s.name, fee: s.fee, date: s.date || "", dateTo: s.dateTo || "", time: s.time || "", linkGroup: s.linkGroup || "" })) });
+    const isDept = isDeptCourse(c);
+    setDraft({
+      id: c.id || genId("course"), originalName: name, name, code: c.code, feeTier: c.feeTier || "", examTitle: c.examTitle || "",
+      kind: isDept ? "department" : "", flatFee: c.flatFee !== undefined ? c.flatFee : 200,
+      theory: isDept ? theoryPapersOf(c).map((t) => ({ id: t.id || subjId(), name: t.name, date: t.date || "", time: t.time || "" })) : [],
+      depts: isDept ? departmentsOf(c).map((d) => ({ id: d.id || subjId(), name: d.name, date: d.date || "", dateTo: d.dateTo || "", time: d.time || "" })) : [],
+      subjects: isDept ? [] : c.subjects.map((s) => ({ id: s.id || subjId(), name: s.name, fee: s.fee, date: s.date || "", dateTo: s.dateTo || "", time: s.time || "", linkGroup: s.linkGroup || "" })),
+    });
   }
+
+  function setKind(kind) {
+    setDraft((d) => {
+      if (kind === "department" && d.theory.length === 0 && d.depts.length === 0) {
+        return {
+          ...d, kind,
+          theory: ["Paper I", "Paper II", "Paper III", "Paper IV"].map((n) => ({ id: subjId(), name: n, date: "", time: "" })),
+          depts: PG_DEFAULT_DEPARTMENTS.map((n) => ({ id: subjId(), name: n, date: "", dateTo: "", time: "" })),
+        };
+      }
+      return { ...d, kind };
+    });
+  }
+  function updateTheory(i, field, val) { setDraft((d) => ({ ...d, theory: d.theory.map((t, idx) => idx === i ? { ...t, [field]: val } : t) })); }
+  function addTheory() { setDraft((d) => ({ ...d, theory: [...d.theory, { id: subjId(), name: "", date: "", time: "" }] })); }
+  function removeTheory(i) { setDraft((d) => ({ ...d, theory: d.theory.filter((_, idx) => idx !== i) })); }
+  function updateDept(i, field, val) { setDraft((d) => ({ ...d, depts: d.depts.map((x, idx) => idx === i ? { ...x, [field]: val } : x) })); }
+  function addDept() { setDraft((d) => ({ ...d, depts: [...d.depts, { id: subjId(), name: "", date: "", dateTo: "", time: "" }] })); }
+  function removeDept(i) { setDraft((d) => ({ ...d, depts: d.depts.filter((_, idx) => idx !== i) })); }
 
   function updateDraftSubject(i, field, val) {
     setDraft((d) => ({ ...d, subjects: d.subjects.map((s, idx) => idx === i ? { ...s, [field]: val } : s) }));
@@ -1879,8 +1983,26 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
 
   async function saveDraft() {
     if (!draft.name.trim() || !draft.code.trim()) { setErr("Course name and code are required."); return; }
+    const isDept = draft.kind === "department";
     const cleanSubjects = draft.subjects.filter((s) => s.name.trim());
-    if (cleanSubjects.length === 0) { setErr("Add at least one subject."); return; }
+    let deptSubjects = [];
+    if (isDept) {
+      const theory = draft.theory.filter((t) => t.name.trim());
+      const depts = draft.depts.filter((d) => d.name.trim());
+      if (theory.length === 0) { setErr("Add at least one theory paper."); return; }
+      if (depts.length === 0) { setErr("Add at least one department."); return; }
+      const seen = new Set();
+      for (const d of depts) {
+        const key = d.name.trim().toLowerCase();
+        if (seen.has(key)) { setErr(`The department "${d.name.trim()}" is listed twice.`); return; }
+        seen.add(key);
+      }
+      if (draft.flatFee === "" || isNaN(Number(draft.flatFee)) || Number(draft.flatFee) < 0) { setErr("Enter a valid examination fee."); return; }
+      deptSubjects = [
+        ...theory.map((t) => ({ id: t.id || subjId(), name: t.name.trim(), fee: 0, date: t.date || "", dateTo: "", time: (t.time || "").trim(), linkGroup: "", role: "theory" })),
+        ...depts.map((d) => ({ id: d.id || subjId(), name: d.name.trim(), fee: 0, date: d.date || "", dateTo: d.dateTo || "", time: (d.time || "").trim(), linkGroup: "", role: "department" })),
+      ];
+    } else if (cleanSubjects.length === 0) { setErr("Add at least one subject."); return; }
     if (!draft.originalName && courses[draft.name]) { setErr("A course with this name already exists."); return; }
     if (draft.originalName && draft.originalName !== draft.name && courses[draft.name]) { setErr("A course with this name already exists."); return; }
     const renamed = draft.originalName && draft.originalName !== draft.name;
@@ -1889,9 +2011,11 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
     next[draft.name] = {
       id: draft.id || genId("course"),
       code: draft.code.trim(),
-      feeTier: draft.feeTier || undefined,
+      feeTier: isDept ? undefined : (draft.feeTier || undefined),
       examTitle: draft.examTitle || "",
-      subjects: cleanSubjects.map((s) => ({ id: s.id || subjId(), name: s.name.trim(), fee: draft.feeTier ? 0 : Number(s.fee) || 0, date: s.date || "", dateTo: s.dateTo || "", time: (s.time || "").trim(), linkGroup: (s.linkGroup || "").trim() })),
+      kind: isDept ? "department" : "",
+      flatFee: isDept ? Number(draft.flatFee) : undefined,
+      subjects: isDept ? deptSubjects : cleanSubjects.map((s) => ({ id: s.id || subjId(), name: s.name.trim(), fee: draft.feeTier ? 0 : Number(s.fee) || 0, date: s.date || "", dateTo: s.dateTo || "", time: (s.time || "").trim(), linkGroup: (s.linkGroup || "").trim() })),
       active: draft.originalName ? (courses[draft.originalName]?.active !== false) : true,
     };
     await persistCourses(next);
@@ -1946,6 +2070,63 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
           <Field label="Examination title" hint='Printed on the hall ticket above "Examination Hall Ticket", e.g. "B.Sc. Nursing Regular Final Professional Examination". Leave blank to not show one.'>
             <input style={inputStyle} value={draft.examTitle} onChange={(e) => setDraft((d) => ({ ...d, examTitle: e.target.value }))} placeholder="e.g. B.Sc. Nursing Regular Final Professional Examination" />
           </Field>
+          <Field label="Course type" hint={draft.originalName ? "The course type can't be changed after the course is created." : "Standard: students tick the subjects/papers they appear in. Department-based (e.g. PG MD/MS): students pick a department, and its theory papers and practical are selected automatically."}>
+            <select style={inputStyle} value={draft.kind} disabled={!!draft.originalName} onChange={(e) => setKind(e.target.value)}>
+              <option value="">Standard — students pick subjects</option>
+              <option value="department">Department-based — students pick a department</option>
+            </select>
+          </Field>
+
+          {draft.kind === "department" && (
+            <>
+              <Field label="Examination fee (₹)" hint="One flat fee per student for the whole department examination (all theory papers and the practical). Editable any time.">
+                <input style={{ ...inputStyle, maxWidth: 160 }} type="number" value={draft.flatFee} onChange={(e) => setDraft((d) => ({ ...d, flatFee: e.target.value }))} />
+              </Field>
+
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: "#5f6d7a", margin: "12px 0 4px" }}>Theory papers (same dates for every department)</div>
+              <div style={{ fontSize: 11, color: "#a2adb8", marginBottom: 6 }}>Every department sits these papers on these dates. Names, dates and timing are editable; add or remove papers if the pattern changes.</div>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 130px 120px 20px", gap: 6, marginBottom: 4 }}>
+                <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>PAPER</div>
+                <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>DATE</div>
+                <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>TIMING</div>
+                <div />
+              </div>
+              {draft.theory.map((t, i) => (
+                <div key={t.id} style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 130px 120px 20px", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                  <input style={inputStyle} placeholder="Paper name" value={t.name} onChange={(e) => updateTheory(i, "name", e.target.value)} />
+                  <input style={inputStyle} type="date" value={t.date} onChange={(e) => updateTheory(i, "date", e.target.value)} />
+                  <input style={inputStyle} placeholder="10 AM\u20131 PM" value={t.time} onChange={(e) => updateTheory(i, "time", e.target.value)} />
+                  <button onClick={() => removeTheory(i)} style={{ background: "transparent", border: "none", color: "#a13a2f", cursor: "pointer", justifySelf: "center" }}><XCircle size={16} /></button>
+                </div>
+              ))}
+              <Btn variant="outline" onClick={addTheory} style={{ marginTop: 4 }}>+ Add paper</Btn>
+
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: "#5f6d7a", margin: "16px 0 4px" }}>Departments & practical dates ({draft.depts.filter((d) => d.name.trim()).length})</div>
+              <div style={{ fontSize: 11, color: "#a2adb8", marginBottom: 6 }}>Each department has its own practical dates. For a two-day practical set both "from" and "to"; for a single day leave "to" blank. Add or remove departments as needed — students see them in alphabetical order.</div>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1fr) 118px 12px 118px 110px 20px", gap: 6, marginBottom: 4 }}>
+                <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>DEPARTMENT</div>
+                <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>PRACTICAL FROM</div>
+                <div />
+                <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>TO</div>
+                <div style={{ fontSize: 10.5, color: "#a2adb8", fontWeight: 600 }}>TIMING</div>
+                <div />
+              </div>
+              {draft.depts.map((d, i) => (
+                <div key={d.id} style={{ display: "grid", gridTemplateColumns: "minmax(150px, 1fr) 118px 12px 118px 110px 20px", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                  <input style={inputStyle} placeholder="Department name" value={d.name} onChange={(e) => updateDept(i, "name", e.target.value)} />
+                  <input style={inputStyle} type="date" title="Practical from" value={d.date} onChange={(e) => updateDept(i, "date", e.target.value)} />
+                  <span style={{ fontSize: 11, color: "#a2adb8", textAlign: "center" }}>to</span>
+                  <input style={inputStyle} type="date" title="Practical to (leave blank for a single day)" value={d.dateTo} onChange={(e) => updateDept(i, "dateTo", e.target.value)} />
+                  <input style={inputStyle} placeholder="9 AM\u20135 PM" title="Timing (optional)" value={d.time} onChange={(e) => updateDept(i, "time", e.target.value)} />
+                  <button onClick={() => removeDept(i)} title="Remove this department" style={{ background: "transparent", border: "none", color: "#a13a2f", cursor: "pointer", justifySelf: "center" }}><XCircle size={16} /></button>
+                </div>
+              ))}
+              <Btn variant="outline" onClick={addDept} style={{ marginTop: 4 }}>+ Add department</Btn>
+            </>
+          )}
+
+          {draft.kind !== "department" && (
+          <>
           <Field label="Fee structure" hint="Flat sums each selected subject's fee below. Tiered structures ignore individual subject fees.">
             <select style={inputStyle} value={draft.feeTier} onChange={(e) => setDraft((d) => ({ ...d, feeTier: e.target.value }))}>
               <option value="">Flat — sum of subject fees</option>
@@ -1981,6 +2162,8 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
             </div>
           ))}
           <Btn variant="outline" onClick={addSubjectRow} style={{ marginTop: 4 }}>+ Add subject</Btn>
+          </>
+          )}
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             <Btn onClick={saveDraft}><CheckCircle2 size={14} /> Save course</Btn>
             <Btn variant="ghost" onClick={() => { setDraft(null); setErr(""); }}>Cancel</Btn>
@@ -1997,7 +2180,8 @@ function CoursesAdmin({ courses, persistCourses, settings, regs, persist }) {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: "#1c2b3a" }}>{name}</div>
                 <div style={{ fontSize: 11.5, color: "#7a8794" }}>
-                  Code {c.code} · {c.subjects.length} subject(s) · {c.feeTier ? (c.feeTier === "tier1" ? "Tiered (₹20/₹40)" : c.feeTier === "tier3" ? "Flat ₹200" : "Tiered (₹20/₹30/₹60)") : "Flat, sum of subject fees"}
+                  {isDeptCourse(c) ? `Code ${c.code} · Department-based · ${departmentsOf(c).length} department(s) · ${theoryPapersOf(c).length} theory papers · Flat ₹${c.flatFee ?? 0}` : null}
+                  {!isDeptCourse(c) && <>Code {c.code} · {c.subjects.length} subject(s) · {c.feeTier ? (c.feeTier === "tier1" ? "Tiered (₹20/₹40)" : c.feeTier === "tier3" ? "Flat ₹200" : "Tiered (₹20/₹30/₹60)") : "Flat, sum of subject fees"}</>}
                 </div>
                 {c.examTitle && <div style={{ fontSize: 11, color: "#a9762f", marginTop: 2, fontStyle: "italic" }}>{c.examTitle}</div>}
               </div>
@@ -2102,7 +2286,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
     setEditDraft({
       hallTicketNo: r.hallTicketNo || "",
       name: r.name, father: r.father, dob: r.dob, gender: r.gender || "", mobile: r.mobile, guardianMobile: r.guardianMobile,
-      permAddress: r.permAddress, commAddress: r.commAddress, course: r.course,
+      permAddress: r.permAddress, commAddress: r.commAddress, course: r.course, department: r.department || "",
       subjects: (r.subjects || []).map((s) => liveSubject(courses, r.course, s).name),
     });
   }
@@ -2132,14 +2316,16 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
   }
 
   async function saveEdit(reg) {
-    const { total: totalFee, subjects } = computeFee(courses, editDraft.course, editDraft.subjects);
+    const deptCourse = isDeptCourse(courses[editDraft.course]);
+    if (deptCourse && !editDraft.department) { window.alert("Select the department for this application."); return; }
+    const { total: totalFee, subjects } = computeFee(courses, editDraft.course, editDraft.subjects, editDraft.department);
     const updated = regs.map((r) => r.id === reg.id ? {
       ...r,
       hallTicketNo: editDraft.hallTicketNo.trim(),
       name: editDraft.name, father: editDraft.father, dob: editDraft.dob, gender: editDraft.gender,
       mobile: editDraft.mobile, guardianMobile: editDraft.guardianMobile,
       permAddress: editDraft.permAddress, commAddress: editDraft.commAddress,
-      course: editDraft.course, subjects, totalFee,
+      course: editDraft.course, department: deptCourse ? editDraft.department : "", subjects, totalFee,
       history: [...r.history, { at: new Date().toISOString(), action: "Details edited by administrator" }],
     } : r);
     try {
@@ -2219,7 +2405,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
               {r.photo?.dataUrl && <img src={r.photo.dataUrl} alt="" loading="lazy" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover" }} />}
               <div>
                 <div style={{ fontWeight: 700, fontSize: 13.5, color: "#1c2b3a" }}>{r.name}</div>
-                <div style={{ fontSize: 11.5, color: "#7a8794" }}>{r.course} · {r.mobile} · {r.id}</div>
+                <div style={{ fontSize: 11.5, color: "#7a8794" }}>{r.course}{r.department ? ` (${r.department})` : ""} · {r.mobile} · {r.id}</div>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -2252,12 +2438,30 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                       <Field label="Permanent address"><textarea style={{ ...inputStyle, minHeight: 50 }} value={editDraft.permAddress} onChange={(e) => setEditDraft((d) => ({ ...d, permAddress: e.target.value }))} /></Field>
                       <Field label="Communication address"><textarea style={{ ...inputStyle, minHeight: 50 }} value={editDraft.commAddress} onChange={(e) => setEditDraft((d) => ({ ...d, commAddress: e.target.value }))} /></Field>
                       <Field label="Course">
-                        <select style={inputStyle} value={editDraft.course} onChange={(e) => setEditDraft((d) => ({ ...d, course: e.target.value, subjects: [] }))}>
+                        <select style={inputStyle} value={editDraft.course} onChange={(e) => setEditDraft((d) => ({ ...d, course: e.target.value, subjects: [], department: "" }))}>
                           {sortedCourseNames(courses).map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </Field>
                     </div>
                   </Grid2>
+                  {isDeptCourse(courses[editDraft.course]) && (
+                    <div style={{ background: "#f7f9fb", border: "1px solid #e2e8ef", borderRadius: 8, padding: 12, marginBottom: 14 }}>
+                      <Field label="Department">
+                        <select style={inputStyle} value={editDraft.department} onChange={(e) => setEditDraft((d) => ({ ...d, department: e.target.value }))}>
+                          <option value="">Select department</option>
+                          {departmentsOf(courses[editDraft.course]).map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
+                        </select>
+                      </Field>
+                      {editDraft.department && sortSubjectsByDate(departmentSubjects(courses[editDraft.course], editDraft.department)).map((s) => (
+                        <div key={s.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 13 }}>
+                          <span>{s.name}</span>
+                          <span style={{ fontSize: 10.5, color: "#8a6116" }}>{formatExamDateRange(s)}</span>
+                        </div>
+                      ))}
+                      <div style={{ fontSize: 11, color: "#8a6116", marginTop: 6 }}>Choosing a department selects all its theory papers and practical automatically. Fee: ₹{courses[editDraft.course]?.flatFee ?? 0}.</div>
+                    </div>
+                  )}
+                  {!isDeptCourse(courses[editDraft.course]) && (
                   <div style={{ background: "#f7f9fb", border: "1px solid #e2e8ef", borderRadius: 8, padding: 12, marginBottom: 14 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#5f6d7a", marginBottom: 8 }}>Subjects</div>
                     {courses[editDraft.course]?.feeTier && (
@@ -2285,6 +2489,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                       );
                     })}
                   </div>
+                  )}
                   <div style={{ display: "flex", gap: 8 }}>
                     <Btn onClick={() => saveEdit(r)}><CheckCircle2 size={14} /> Save changes</Btn>
                     <Btn variant="ghost" onClick={cancelEdit}>Cancel</Btn>
@@ -2297,6 +2502,7 @@ function Applications({ regs, persist, nextSeq, courses, settings }) {
                       <DetailRow label="Father / Guardian" value={r.father} />
                       <DetailRow label="Date of birth" value={r.dob} />
                       <DetailRow label="Gender" value={r.gender || "—"} />
+                      {r.department && <DetailRow label="Department" value={r.department} />}
                       <DetailRow label="Guardian mobile" value={r.guardianMobile || "—"} />
                       <DetailRow label="Permanent address" value={r.permAddress} />
                       <DetailRow label="Communication address" value={r.commAddress} />
@@ -2477,6 +2683,9 @@ function SettingsAdmin({ settings, persistSettings }) {
           <input style={inputStyle} value={draft.signatoryTitle} onChange={(e) => set("signatoryTitle", e.target.value)} />
         </Field>
       </Grid2>
+      <Field label="Practical examination note" hint="Printed on the hall ticket under the subject list. Leave blank to not show one.">
+        <input style={inputStyle} value={draft.practicalExamNote} onChange={(e) => set("practicalExamNote", e.target.value)} />
+      </Field>
 
       <Field label="Message when a student hasn't uploaded a signature" hint='Shown on the hall ticket in place of a signature image. "Sd/-" is reserved for the administrator/Dean signature only, never shown for students.'>
         <input style={inputStyle} value={draft.signatureMissingMessage} onChange={(e) => set("signatureMissingMessage", e.target.value)} />
@@ -2538,7 +2747,7 @@ const CHIP_PALETTE = ["#a9762f", "#0f766e", "#8b2635", "#1a3a5c", "#6d28d9", "#2
 
 function HallTicketCard({ r, settings, courses }) {
   const accent = courseAccent(r.course);
-  const qrText = `Roll No: ${r.hallTicketNo || ""}\nName: ${r.name || ""}\nCourse: ${r.course || ""}`;
+  const qrText = `Roll No: ${r.hallTicketNo || ""}\nName: ${r.name || ""}\nCourse: ${r.course || ""}${r.department ? `\nDepartment: ${r.department}` : ""}`;
   return (
     <div style={{ maxWidth: 580, margin: "0 auto", borderRadius: 12, padding: 3, background: `linear-gradient(135deg, ${accent.main}, #e0b86a)` }}>
       <div style={{ borderRadius: 10, background: "#fff", overflow: "hidden", position: "relative" }}>
@@ -2572,6 +2781,7 @@ function HallTicketCard({ r, settings, courses }) {
               <DetailRow label="Candidate name" value={r.name} />
               <DetailRow label="Father / Guardian" value={r.father} />
               <DetailRow label="Course" value={r.course} />
+              {r.department && <DetailRow label="Department" value={r.department} />}
               <DetailRow label="Examination centre" value={settings?.examCentre || "AIIMS Bibinagar — Examination Hall"} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
@@ -2599,6 +2809,11 @@ function HallTicketCard({ r, settings, courses }) {
                 </div>
               ))}
             </div>
+            {settings?.practicalExamNote && (
+              <div style={{ fontSize: 10.5, color: "#8a6116", fontStyle: "italic", marginTop: 8 }}>
+                Note: {settings.practicalExamNote}
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: 20, paddingTop: 12, borderTop: `2px dashed ${accent.soft}` }}>
@@ -2716,7 +2931,7 @@ function sortedCourseNames(courses) {
 }
 
 function sortSubjectsByDate(list) {
-  return [...list].sort((a, b) => (a.date || "9999-99-99").localeCompare(b.date || "9999-99-99"));
+  return [...list].sort((a, b) => (a.date || "9999-99-99").localeCompare(b.date || "9999-99-99") || byNameNatural(a, b));
 }
 
 function sortByRoll(list) {
@@ -2980,6 +3195,7 @@ function Reports({ regs, courses }) {
     { label: "Father/Guardian", get: (r) => r.father },
     { label: "Mobile", get: (r) => forceText(r.mobile) },
     { label: "Course", get: (r) => r.course },
+    { label: "Department", get: (r) => r.department || "" },
     { label: "Subjects", get: (r) => (r.subjects || []).map((raw) => { const s = liveSubject(courses, r.course, raw); return s.date ? `${s.name} (${formatExamDateRange(s)})` : s.name; }).join("; ") },
     { label: "Total fee", get: (r) => r.totalFee },
     { label: "UTR", get: (r) => forceText(r.utr) },
